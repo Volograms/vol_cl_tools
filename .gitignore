@@ -23,10 +23,10 @@
 *.lo
 
 # Shared objects (inc. Windows DLLs)
-# *.dll
-# *.so
-# *.so.*
-# *.dylib
+ *.dll
+ *.so
+ *.so.*
+ *.dylib
 
 # Executables
 *.exe
@@ -53,8 +53,8 @@ dkms.conf
 
 # Project-specific
 output_frame_*
-# *.bin
+ *.bin
 .vscode/
-# *.vols
-# *.mp4
-# *.bvh
+ *.vols
+ *.mp4
+ *.bvh
