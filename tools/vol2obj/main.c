@@ -142,23 +142,26 @@ static bool write_rgb_image_to_ppm( const char* filename, uint8_t* image_ptr, in
 static bool _write_video_frame_to_image( const char* output_image_filename ) {
   if ( !output_image_filename ) { return false; }
 
+  char full_path[MAX_FILENAME_LEN];
+  sprintf( full_path, "%s%s", _output_dir_path, output_image_filename );
+
   switch ( _img_fmt ) {
   case IMG_FMT_PPM: {
-    if ( !write_rgb_image_to_ppm( output_image_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
-      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", output_image_filename );
+    if ( !write_rgb_image_to_ppm( full_path, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
+      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
   case IMG_FMT_JPG: {
-    if ( !stbi_write_jpg( output_image_filename, _av_info.w, _av_info.h, 3, _av_info.pixels_ptr, _jpeg_quality ) ) {
-      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", output_image_filename );
+    if ( !stbi_write_jpg( full_path, _av_info.w, _av_info.h, 3, _av_info.pixels_ptr, _jpeg_quality ) ) {
+      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
   default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
   } // endswitch
 
-  printf( "Wrote image file `%s`\n", output_image_filename );
+  printf( "Wrote image file `%s`\n", full_path );
 
   return true;
 }
@@ -180,24 +183,23 @@ the map_Kd value is multiplied by the Kd value.
   */
 
   char full_path[MAX_FILENAME_LEN];
-  full_path[0] = '\0';
-  strncat( full_path, _output_dir_path, MAX_FILENAME_LEN - 1 );
+  sprintf( full_path, "%s%s", _output_dir_path, output_mtl_filename );
 
-  FILE* f_ptr = fopen( output_mtl_filename, "w" );
+  FILE* f_ptr = fopen( full_path, "w" );
   if ( !f_ptr ) {
-    fprintf( stderr, "ERROR: opening file for writing `%s`\n", output_mtl_filename );
+    fprintf( stderr, "ERROR: opening file for writing `%s`\n", full_path );
     return false;
   }
   if ( fprintf( f_ptr, "newmtl %s\n", material_name ) < 0 ) {
-    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", output_mtl_filename );
+    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
   if ( fprintf( f_ptr, "map_Kd %s\n", image_filename ) < 0 ) {
-    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", output_mtl_filename );
+    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
   fclose( f_ptr );
-  printf( "Wrote material file `%s`\n", output_mtl_filename );
+  printf( "Wrote material file `%s`\n", full_path );
 
   return true;
 }
@@ -211,9 +213,12 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
 
   // TODO(Anton) validate fprintfs here too
 
-  FILE* f_ptr = fopen( output_mesh_filename, "w" );
+  char full_path[MAX_FILENAME_LEN];
+  sprintf( full_path, "%s%s", _output_dir_path, output_mesh_filename );
+
+  FILE* f_ptr = fopen( full_path, "w" );
   if ( !f_ptr ) {
-    fprintf( stderr, "ERROR: opening file for writing `%s`\n", output_mesh_filename );
+    fprintf( stderr, "ERROR: opening file for writing `%s`\n", full_path );
     return false;
   }
 
@@ -270,7 +275,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   }
 
   fclose( f_ptr );
-  printf( "Wrote mesh file `%s`\n", output_mesh_filename );
+  printf( "Wrote mesh file `%s`\n", full_path );
 
   return true;
 }
