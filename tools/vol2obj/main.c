@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.3.1
+ * Version   | 0.4.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -51,9 +51,10 @@
  *
  * History
  * -----------
- * - 0.3   (2021/12/16) - First release build, and a fix to mirrored-on-x bug (0.3.1).
- * - 0.2   (2021/12/15) - Basic command-line flags and an `--all` option.
- * - 0.1   (2021/11/12) - First version with number and repo.
+ * - 0.4.0   (2022/01/xx) - `--output_dir` cl flag.
+ * - 0.3.0   (2021/12/16) - First release build, and a fix to mirrored-on-x bug (0.3.1).
+ * - 0.2.0   (2021/12/15) - Basic command-line flags and an `--all` option.
+ * - 0.1.0   (2021/11/12) - First version with number and repo.
  */
 
 #include "vol_av.h"   // Volograms' vol_av texture video library.
@@ -82,8 +83,7 @@
 #include <errno.h>
 #endif
 
-/// Maximum file path length
-#define MAX_FILENAME_LEN 4096
+#define MAX_FILENAME_LEN 4096 // Maximum file path length
 
 /** Different output image format options.
 NOTE(Anton) We could add DDS/ktx/basis here.
@@ -94,35 +94,22 @@ typedef enum img_fmt_t {
   IMG_FMT_MAX      // just for counting # image formats
 } img_fmt_t;
 
-/// Image format to use for output.
-static img_fmt_t _img_fmt = IMG_FMT_JPG;
-// Arbitrary choice of 95% quality v size based on GIMP's default.
-static int _jpeg_quality = 95;
+static img_fmt_t _img_fmt = IMG_FMT_JPG;             // Image format to use for output.
+static int _jpeg_quality  = 95;                      // Arbitrary choice of 95% quality v size based on GIMP's default.
+static vol_av_video_t _av_info;                      // Audio-video information from vol_av library.
+static vol_geom_info_t _geom_info;                   // Mesh information from vol_geom library.
+static char* _input_header_filename;                 // e.g. `header.vols`
+static char* _input_sequence_filename;               // e.g. `sequence.vols`
+static char* _input_video_filename;                  // e.g. `texture_1024.webm`
+static char _output_dir_path[2048];                  // e.g. `my_output/`
+static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000000.obj`
+static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
+static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
+static char _material_name[MAX_FILENAME_LEN];        // e.g. `volograms_mtl_00000000`
 
 /// Globals for parsing the command line arguments in a function.
 static int my_argc;
 static char** my_argv;
-
-/// Audio-video information from vol_av library.
-static vol_av_video_t _av_info;
-/// Mesh information from vol_geom library.
-static vol_geom_info_t _geom_info;
-/// e.g. `header.vols`
-static char* _input_header_filename;
-/// e.g. `sequence.vols`
-static char* _input_sequence_filename;
-/// e.g. `texture_1024.webm`
-static char* _input_video_filename;
-/// e.g. `my_output/`
-static char _output_dir_path[2048];
-/// e.g. `output_frame_00000000.obj`
-static char _output_mesh_filename[MAX_FILENAME_LEN];
-/// e.g. `output_frame_00000000.mtl`
-static char _output_mtl_filename[MAX_FILENAME_LEN];
-/// e.g. `output_frame_00000000.jpg`
-static char _output_img_filename[MAX_FILENAME_LEN];
-/// e.g. `volograms_mtl_00000000`
-static char _material_name[MAX_FILENAME_LEN];
 
 /** Look for a string amongst command-line arguments.
  * @param check_str The string to match (case insensitive).

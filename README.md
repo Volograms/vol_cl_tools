@@ -7,7 +7,7 @@ Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environme
 
 | Tool    | Version | Description                                                                                   |
 | ------- | ------- | --------------------------------------------------------------------------------------------- |
-| vol2obj | 0.3.1   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
+| vol2obj | 0.4.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
 
 Further tools to be added: obj2vol, sequence cutting and manipulation. 
 
