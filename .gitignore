@@ -58,3 +58,5 @@ output_frame_*
 *.vols
 *.mp4
 *.bvh
+*.dll
+vol_cl_tools_*
