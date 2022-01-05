@@ -74,6 +74,7 @@ Options:
                     If the -l parameter is not given then only this single frame is processed.
   -l N              Process up to specific frame number given by N.
                     Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.
+  --output_dir      Specify a directory to write output files to. The default is the current working directory.
   --help            This text.
 ```
 
