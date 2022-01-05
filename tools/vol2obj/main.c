@@ -464,7 +464,7 @@ static bool _make_dir( const char* dir_path ) {
     return true;
   }
 #else
-  if ( 0 == mkdir( dir_path, 777 ) ) {
+  if ( 0 == mkdir( dir_path, S_IRWXU ) ) { // Read-Write-eXecute permissions
     printf( "Created directory `%s`\n", dir_path );
     return true;
   }
