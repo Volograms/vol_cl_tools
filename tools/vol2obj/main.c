@@ -73,6 +73,14 @@
 #else
 #include <strings.h> // strcasecmp
 #endif
+#if defined( _WIN32 ) || defined( _WIN64 )
+#include <direct.h>
+#include <windows.h>
+#else
+#include <dirent.h>   // DIR
+#include <sys/stat.h> // mkdir
+#include <errno.h>
+#endif
 
 /// Maximum file path length
 #define MAX_FILENAME_LEN 4096
@@ -105,6 +113,8 @@ static char* _input_header_filename;
 static char* _input_sequence_filename;
 /// e.g. `texture_1024.webm`
 static char* _input_video_filename;
+/// e.g. `my_output/`
+static char _output_dir_path[2048];
 /// e.g. `output_frame_00000000.obj`
 static char _output_mesh_filename[MAX_FILENAME_LEN];
 /// e.g. `output_frame_00000000.mtl`
@@ -181,6 +191,10 @@ Specifies that a color texture file or color procedural texture file is
 linked to the diffuse reflectivity of the material.  During rendering,
 the map_Kd value is multiplied by the Kd value.
   */
+
+  char full_path[MAX_FILENAME_LEN];
+  full_path[0] = '\0';
+  strncat( full_path, _output_dir_path, MAX_FILENAME_LEN - 1 );
 
   FILE* f_ptr = fopen( output_mtl_filename, "w" );
   if ( !f_ptr ) {
@@ -437,6 +451,36 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
   return true;
 }
 
+static bool _does_dir_exist( const char* dir_path ) {
+#if defined( _WIN32 ) || defined( _WIN64 )
+  DWORD attribs = GetFileAttributes( dir_path );
+  return ( attribs != INVALID_FILE_ATTRIBUTES && ( attribs & FILE_ATTRIBUTE_DIRECTORY ) );
+#else
+  DIR* dir = opendir( dir_path );
+  if ( dir ) {
+    closedir( dir );
+    return true;
+  }
+#endif
+  return false;
+}
+
+static bool _make_dir( const char* dir_path ) {
+#if defined( _WIN32 ) || defined( _WIN64 )
+  if ( 0 == _mkdir( dir_path ) ) {
+    printf( "Created directory `%s`\n", dir_path );
+    return true;
+  }
+#else
+  if ( 0 == mkdir( dir_path, 777 ) ) {
+    printf( "Created directory `%s`\n", dir_path );
+    return true;
+  }
+#endif
+  fprintf( stderr, "ERROR: creating directory `%s`\n", dir_path );
+  return false;
+}
+
 int main( int argc, char** argv ) {
   int first_frame = 0;
   int last_frame  = 0;
@@ -446,11 +490,12 @@ int main( int argc, char** argv ) {
     my_argc = argc;
     my_argv = argv;
     if ( _check_param( "--all" ) ) { all_frames = true; }
-    int f_idx = _check_param( "-f" );
-    int h_idx = _check_param( "-h" );
-    int l_idx = _check_param( "-l" );
-    int s_idx = _check_param( "-s" );
-    int v_idx = _check_param( "-v" );
+    int f_idx          = _check_param( "-f" );
+    int h_idx          = _check_param( "-h" );
+    int l_idx          = _check_param( "-l" );
+    int output_dir_idx = _check_param( "--output_dir" );
+    int s_idx          = _check_param( "-s" );
+    int v_idx          = _check_param( "-v" );
     if ( f_idx ) {
       if ( f_idx >= argc - 1 ) {
         fprintf( stderr, "ERROR: -f parameter must be followed by a frame number.\n" );
@@ -473,6 +518,27 @@ int main( int argc, char** argv ) {
       }
       last_frame  = atoi( argv[l_idx + 1] );
       first_frame = first_frame >= last_frame ? last_frame : first_frame;
+    }
+    if ( output_dir_idx ) {
+      if ( output_dir_idx >= argc - 1 ) {
+        fprintf( stderr, "ERROR: --output_dir parameter must be followed by a file path.\n" );
+        return 1;
+      }
+      _output_dir_path[0] = '\0';
+      int plen            = (int)strlen( argv[output_dir_idx + 1] );
+      int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+      strncat( _output_dir_path, argv[output_dir_idx + 1], l );
+
+      // remove any existing path slashes and put a *nix slash at the end
+      if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
+      if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
+      strncat( _output_dir_path, "/", 2048 - 1 );
+
+      // if path doesn't exist try making that folder.
+      if ( !_does_dir_exist( _output_dir_path ) ) {
+        if ( !_make_dir( _output_dir_path ) ) { _output_dir_path[0] = '\0'; }
+      }
+      printf( "Using output directory = `%s`\n", _output_dir_path );
     }
     if ( s_idx ) {
       if ( s_idx >= argc - 1 ) {
@@ -497,6 +563,7 @@ int main( int argc, char** argv ) {
       printf( "                    If the -l parameter is not given then only this single frame is processed.\n" );
       printf( "  -l N              Process up to specific frame number given by N.\n" );
       printf( "                    Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.\n" );
+      printf( "  --output_dir      Specify a directory to write output files to. The default is the current working directory.\n" );
       printf( "  --help            This text.\n" );
 
       return 0;
