@@ -37,4 +37,6 @@ cl %COMPILER_FLAGS% %SRC% %I% /link %LINKER_FLAGS% %LIBS%
 copy vol2obj.exe ..\
 copy ..\thirdparty\ffmpeg\bin\vs\x64\*.dll ..\
 
+popd
+
 pause
