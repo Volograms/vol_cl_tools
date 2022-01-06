@@ -194,10 +194,15 @@ the map_Kd value is multiplied by the Kd value.
     fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
-  if ( fprintf( f_ptr, "map_Kd %s\n", image_filename ) < 0 ) {
+  if ( fprintf( f_ptr, "map_Kd %s\nmap_Ka %s\n", image_filename, image_filename ) < 0 ) {
     fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
+  fprintf( f_ptr, "Ka 0.1 0.1 0.1\n" );
+  fprintf( f_ptr, "Kd 0.9 0.9 0.9\n" );
+  fprintf( f_ptr, "Ks 0.0 0.0 0.0\n" );
+  fprintf( f_ptr, "d 1.0\nTr 0.0\n" );
+  fprintf( f_ptr, "Ns 0.0\n" );
   fclose( f_ptr );
   printf( "Wrote material file `%s`\n", full_path );
 
@@ -251,7 +256,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       float x = normals_ptr[i * 3 + 0];
       float y = normals_ptr[i * 3 + 1];
       float z = normals_ptr[i * 3 + 2];
-      fprintf( f_ptr, "vn %0.3f %0.3f %0.3f\n", x, y, z );
+      fprintf( f_ptr, "vn %0.3f %0.3f %0.3f\n", -x, y, z );
     }
   }
   assert( indices_ptr && "Hey if there are no indices Anton should make sure that is accounted for in the f section" );
