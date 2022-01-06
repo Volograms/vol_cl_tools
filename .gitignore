@@ -60,3 +60,4 @@ output_frame_*
 *.bvh
 *.dll
 vol_cl_tools_*
+build/

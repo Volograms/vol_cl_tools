@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.4.0
+ * Version   | 0.4.1
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -51,7 +51,8 @@
  *
  * History
  * -----------
- * - 0.4.0   (2022/01/xx) - `--output_dir` cl flag.
+ * - 0.4.1   (2022/01/06) - Fix to normals (x axis flip).
+ * - 0.4.0   (2022/01/06) - `--output_dir` cl flag.
  * - 0.3.0   (2021/12/16) - First release build, and a fix to mirrored-on-x bug (0.3.1).
  * - 0.2.0   (2021/12/15) - Basic command-line flags and an `--all` option.
  * - 0.1.0   (2021/11/12) - First version with number and repo.
