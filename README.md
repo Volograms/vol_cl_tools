@@ -10,9 +10,9 @@ a common 3D model format (Wavefront .obj) so that you can import it in Unity gam
 
 What you need to do is:
 
-1. Get the *vol2obj* tool by downloading a [release](https://github.com/Volograms/vol_cl_tools/releases) (Windows), or by compiling it (other operating systems). See instructions below for compiling.
+1. Get the *vol2obj* tool by downloading a [release](https://github.com/Volograms/vol_cl_tools/releases) (Windows), or by [compiling it](#compiling-the-tools) (other operating systems).
 2. Get a vologram off your phone. On iOS you can find these using the *Files* system app, browsing to *Volu*, then *Volograms*. The volograms appear as numbered folders. If you tap-and-hold you can *share* one of these folders with yourself by e.g. email and *Mail Drop* or another file transfer method.
-3. On the computer you have *vol2obj* download the vologram folder you got off your phone, and put it somewhere easy to find. It will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
+3. Download the vologram folder you got off your phone onto the computer you have *vol2obj*, and put it in the same folder as the *vol2obj* tool so it's easy to find. Your vologram capture's folder will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
 4. Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
 5. Change directory to the folder containing vol2obj.
 6. Run *vol2obj* and point it to your vologram's header, sequence, and texture files. e.g. if your vologram capture is in a folder called `1625575284206_ld` and it's in the same directory as the *vol2obj* program:
