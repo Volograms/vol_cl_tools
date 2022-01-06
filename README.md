@@ -53,8 +53,6 @@ README.md            -- This file.
 
 ## Compiling the Tools
 
-Windows users can skip this step by downloading a packaged binary: https://github.com/Volograms/vol_cl_tools/releases.
-
 * Make sure that Git and [Git LFS](https://git-lfs.github.com/) are installed on your system.
 * Clone this repository.
 * Install FFmpeg development libraries:
