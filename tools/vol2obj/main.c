@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.3.1
+ * Version   | 0.4.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -51,9 +51,10 @@
  *
  * History
  * -----------
- * - 0.3   (2021/12/16) - First release build, and a fix to mirrored-on-x bug (0.3.1).
- * - 0.2   (2021/12/15) - Basic command-line flags and an `--all` option.
- * - 0.1   (2021/11/12) - First version with number and repo.
+ * - 0.4.0   (2022/01/xx) - `--output_dir` cl flag.
+ * - 0.3.0   (2021/12/16) - First release build, and a fix to mirrored-on-x bug (0.3.1).
+ * - 0.2.0   (2021/12/15) - Basic command-line flags and an `--all` option.
+ * - 0.1.0   (2021/11/12) - First version with number and repo.
  */
 
 #include "vol_av.h"   // Volograms' vol_av texture video library.
@@ -73,9 +74,16 @@
 #else
 #include <strings.h> // strcasecmp
 #endif
+#if defined( _WIN32 ) || defined( _WIN64 )
+#include <direct.h>
+#include <windows.h>
+#else
+#include <dirent.h>   // DIR
+#include <sys/stat.h> // mkdir
+#include <errno.h>
+#endif
 
-/// Maximum file path length
-#define MAX_FILENAME_LEN 4096
+#define MAX_FILENAME_LEN 4096 // Maximum file path length
 
 /** Different output image format options.
 NOTE(Anton) We could add DDS/ktx/basis here.
@@ -86,33 +94,22 @@ typedef enum img_fmt_t {
   IMG_FMT_MAX      // just for counting # image formats
 } img_fmt_t;
 
-/// Image format to use for output.
-static img_fmt_t _img_fmt = IMG_FMT_JPG;
-// Arbitrary choice of 95% quality v size based on GIMP's default.
-static int _jpeg_quality = 95;
+static img_fmt_t _img_fmt = IMG_FMT_JPG;             // Image format to use for output.
+static int _jpeg_quality  = 95;                      // Arbitrary choice of 95% quality v size based on GIMP's default.
+static vol_av_video_t _av_info;                      // Audio-video information from vol_av library.
+static vol_geom_info_t _geom_info;                   // Mesh information from vol_geom library.
+static char* _input_header_filename;                 // e.g. `header.vols`
+static char* _input_sequence_filename;               // e.g. `sequence.vols`
+static char* _input_video_filename;                  // e.g. `texture_1024.webm`
+static char _output_dir_path[2048];                  // e.g. `my_output/`
+static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000000.obj`
+static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
+static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
+static char _material_name[MAX_FILENAME_LEN];        // e.g. `volograms_mtl_00000000`
 
 /// Globals for parsing the command line arguments in a function.
 static int my_argc;
 static char** my_argv;
-
-/// Audio-video information from vol_av library.
-static vol_av_video_t _av_info;
-/// Mesh information from vol_geom library.
-static vol_geom_info_t _geom_info;
-/// e.g. `header.vols`
-static char* _input_header_filename;
-/// e.g. `sequence.vols`
-static char* _input_sequence_filename;
-/// e.g. `texture_1024.webm`
-static char* _input_video_filename;
-/// e.g. `output_frame_00000000.obj`
-static char _output_mesh_filename[MAX_FILENAME_LEN];
-/// e.g. `output_frame_00000000.mtl`
-static char _output_mtl_filename[MAX_FILENAME_LEN];
-/// e.g. `output_frame_00000000.jpg`
-static char _output_img_filename[MAX_FILENAME_LEN];
-/// e.g. `volograms_mtl_00000000`
-static char _material_name[MAX_FILENAME_LEN];
 
 /** Look for a string amongst command-line arguments.
  * @param check_str The string to match (case insensitive).
@@ -145,23 +142,26 @@ static bool write_rgb_image_to_ppm( const char* filename, uint8_t* image_ptr, in
 static bool _write_video_frame_to_image( const char* output_image_filename ) {
   if ( !output_image_filename ) { return false; }
 
+  char full_path[MAX_FILENAME_LEN];
+  sprintf( full_path, "%s%s", _output_dir_path, output_image_filename );
+
   switch ( _img_fmt ) {
   case IMG_FMT_PPM: {
-    if ( !write_rgb_image_to_ppm( output_image_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
-      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", output_image_filename );
+    if ( !write_rgb_image_to_ppm( full_path, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
+      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
   case IMG_FMT_JPG: {
-    if ( !stbi_write_jpg( output_image_filename, _av_info.w, _av_info.h, 3, _av_info.pixels_ptr, _jpeg_quality ) ) {
-      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", output_image_filename );
+    if ( !stbi_write_jpg( full_path, _av_info.w, _av_info.h, 3, _av_info.pixels_ptr, _jpeg_quality ) ) {
+      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
   default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
   } // endswitch
 
-  printf( "Wrote image file `%s`\n", output_image_filename );
+  printf( "Wrote image file `%s`\n", full_path );
 
   return true;
 }
@@ -182,21 +182,24 @@ linked to the diffuse reflectivity of the material.  During rendering,
 the map_Kd value is multiplied by the Kd value.
   */
 
-  FILE* f_ptr = fopen( output_mtl_filename, "w" );
+  char full_path[MAX_FILENAME_LEN];
+  sprintf( full_path, "%s%s", _output_dir_path, output_mtl_filename );
+
+  FILE* f_ptr = fopen( full_path, "w" );
   if ( !f_ptr ) {
-    fprintf( stderr, "ERROR: opening file for writing `%s`\n", output_mtl_filename );
+    fprintf( stderr, "ERROR: opening file for writing `%s`\n", full_path );
     return false;
   }
   if ( fprintf( f_ptr, "newmtl %s\n", material_name ) < 0 ) {
-    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", output_mtl_filename );
+    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
   if ( fprintf( f_ptr, "map_Kd %s\n", image_filename ) < 0 ) {
-    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", output_mtl_filename );
+    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
   fclose( f_ptr );
-  printf( "Wrote material file `%s`\n", output_mtl_filename );
+  printf( "Wrote material file `%s`\n", full_path );
 
   return true;
 }
@@ -210,9 +213,12 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
 
   // TODO(Anton) validate fprintfs here too
 
-  FILE* f_ptr = fopen( output_mesh_filename, "w" );
+  char full_path[MAX_FILENAME_LEN];
+  sprintf( full_path, "%s%s", _output_dir_path, output_mesh_filename );
+
+  FILE* f_ptr = fopen( full_path, "w" );
   if ( !f_ptr ) {
-    fprintf( stderr, "ERROR: opening file for writing `%s`\n", output_mesh_filename );
+    fprintf( stderr, "ERROR: opening file for writing `%s`\n", full_path );
     return false;
   }
 
@@ -269,7 +275,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   }
 
   fclose( f_ptr );
-  printf( "Wrote mesh file `%s`\n", output_mesh_filename );
+  printf( "Wrote mesh file `%s`\n", full_path );
 
   return true;
 }
@@ -437,6 +443,36 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
   return true;
 }
 
+static bool _does_dir_exist( const char* dir_path ) {
+#if defined( _WIN32 ) || defined( _WIN64 )
+  DWORD attribs = GetFileAttributes( dir_path );
+  return ( attribs != INVALID_FILE_ATTRIBUTES && ( attribs & FILE_ATTRIBUTE_DIRECTORY ) );
+#else
+  DIR* dir = opendir( dir_path );
+  if ( dir ) {
+    closedir( dir );
+    return true;
+  }
+#endif
+  return false;
+}
+
+static bool _make_dir( const char* dir_path ) {
+#if defined( _WIN32 ) || defined( _WIN64 )
+  if ( 0 == _mkdir( dir_path ) ) {
+    printf( "Created directory `%s`\n", dir_path );
+    return true;
+  }
+#else
+  if ( 0 == mkdir( dir_path, S_IRWXU ) ) { // Read-Write-eXecute permissions
+    printf( "Created directory `%s`\n", dir_path );
+    return true;
+  }
+#endif
+  fprintf( stderr, "ERROR: creating directory `%s`\n", dir_path );
+  return false;
+}
+
 int main( int argc, char** argv ) {
   int first_frame = 0;
   int last_frame  = 0;
@@ -446,11 +482,12 @@ int main( int argc, char** argv ) {
     my_argc = argc;
     my_argv = argv;
     if ( _check_param( "--all" ) ) { all_frames = true; }
-    int f_idx = _check_param( "-f" );
-    int h_idx = _check_param( "-h" );
-    int l_idx = _check_param( "-l" );
-    int s_idx = _check_param( "-s" );
-    int v_idx = _check_param( "-v" );
+    int f_idx          = _check_param( "-f" );
+    int h_idx          = _check_param( "-h" );
+    int l_idx          = _check_param( "-l" );
+    int output_dir_idx = _check_param( "--output_dir" );
+    int s_idx          = _check_param( "-s" );
+    int v_idx          = _check_param( "-v" );
     if ( f_idx ) {
       if ( f_idx >= argc - 1 ) {
         fprintf( stderr, "ERROR: -f parameter must be followed by a frame number.\n" );
@@ -473,6 +510,27 @@ int main( int argc, char** argv ) {
       }
       last_frame  = atoi( argv[l_idx + 1] );
       first_frame = first_frame >= last_frame ? last_frame : first_frame;
+    }
+    if ( output_dir_idx ) {
+      if ( output_dir_idx >= argc - 1 ) {
+        fprintf( stderr, "ERROR: --output_dir parameter must be followed by a file path.\n" );
+        return 1;
+      }
+      _output_dir_path[0] = '\0';
+      int plen            = (int)strlen( argv[output_dir_idx + 1] );
+      int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+      strncat( _output_dir_path, argv[output_dir_idx + 1], l );
+
+      // remove any existing path slashes and put a *nix slash at the end
+      if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
+      if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
+      strncat( _output_dir_path, "/", 2048 - 1 );
+
+      // if path doesn't exist try making that folder.
+      if ( !_does_dir_exist( _output_dir_path ) ) {
+        if ( !_make_dir( _output_dir_path ) ) { _output_dir_path[0] = '\0'; }
+      }
+      printf( "Using output directory = `%s`\n", _output_dir_path );
     }
     if ( s_idx ) {
       if ( s_idx >= argc - 1 ) {
@@ -497,6 +555,7 @@ int main( int argc, char** argv ) {
       printf( "                    If the -l parameter is not given then only this single frame is processed.\n" );
       printf( "  -l N              Process up to specific frame number given by N.\n" );
       printf( "                    Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.\n" );
+      printf( "  --output_dir      Specify a directory to write output files to. The default is the current working directory.\n" );
       printf( "  --help            This text.\n" );
 
       return 0;

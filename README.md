@@ -7,7 +7,7 @@ Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environme
 
 | Tool    | Version | Description                                                                                   |
 | ------- | ------- | --------------------------------------------------------------------------------------------- |
-| vol2obj | 0.3.1   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
+| vol2obj | 0.4.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
 
 Further tools to be added: obj2vol, sequence cutting and manipulation. 
 
@@ -74,6 +74,7 @@ Options:
                     If the -l parameter is not given then only this single frame is processed.
   -l N              Process up to specific frame number given by N.
                     Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.
+  --output_dir      Specify a directory to write output files to. The default is the current working directory.
   --help            This text.
 ```
 
