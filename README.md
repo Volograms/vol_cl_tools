@@ -21,7 +21,13 @@ What you need to do is:
 .\vol2obj.exe -h 1625575284206_ld\header.vols -s 1625575284206_ld\sequence_0.vols -v 1625575284206_ld\texture_2048_h264.mp4 --output_dir output
 ```
 
-This will create a subdirectory called `output` containing the first frame of your vologram sequence as a Wavefront .obj file, with a matching material .mtl file, and a texture encoded as a .jpg image.
+This will create a subdirectory called `output` containing the first frame of your vologram sequence as the following files:
+
+```
+output_frame_00000000.jpg  -- JPEG texture.
+output_frame_00000000.mtl  -- Wavefront MTL material file.
+output_frame_00000000.obj  -- Wavefront OBJ mesh file. 
+```
 
 You should be able to import or drag-and-drop this into most 3D software and 3D game engines. Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the file.
 
