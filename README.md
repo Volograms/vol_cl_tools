@@ -26,7 +26,7 @@ a common 3D model format (Wavefront .obj) so that you can import it in Unity gam
 * Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
 * Change directory to the folder containing *vol2obj*.
 
-### Convert a Vologram Frame to a .obj
+### Convert a Vologram Frame to .obj
 
 * Run *vol2obj* and point it to your vologram's header, sequence, and texture files. e.g. if your vologram capture is in a folder called `1625575284206_ld` and it's in the same directory as the *vol2obj* program:
 
