@@ -17,7 +17,6 @@ STA_LIB_GL  =
 DYN_LIB_AV  = -lavcodec -lavdevice -lavformat -lavutil -lswscale
 LIB_DIR     = -L ./
 BIN_EXT     = .bin
-POSTBLD_AV  = 
 CLEAN_CMD   = rm -f *.bin
 
 ifeq ($(OS),Windows_NT)
@@ -30,8 +29,7 @@ ifeq ($(OS),Windows_NT)
 	LIB_DIR_AV = ./thirdparty/ffmpeg/lib/vs/x64/
 	LIB_DIR   += -L $(LIB_DIR_AV)
 	STA_LIB_AV = $(LIB_DIR_AV)avcodec.lib $(LIB_DIR_AV)avdevice.lib $(LIB_DIR_AV)avformat.lib $(LIB_DIR_AV)avutil.lib $(LIB_DIR_AV)swscale.lib 
-	POSTBLD_AV = copy "thirdparty\ffmpeg\bin\vs\x64\*.dll" ".\"
-	CLEAN_CMD  = del /q *.exe *.dll
+	CLEAN_CMD  = 
 else
 	DYN_LIB_AV  += -lm
 	UNAME_S      = $(shell uname -s)
@@ -45,7 +43,6 @@ endif
 all: vol2obj
 
 vol2obj:
-	$(POSTBLD_AV)
 	$(CC) $(FLAGS) $(DEBUG) $(SANS) -o vol2obj$(BIN_EXT) tools/vol2obj/main.c $(INC_DIR) $(SRC_GEOM) $(SRC_AV) $(STA_LIB_AV) $(LIB_DIR) $(DYN_LIB_AV)
 
 .PHONY : clean
