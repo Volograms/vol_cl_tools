@@ -51,7 +51,7 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 
 ### Tips
 
-* For more details on extracting frames with vol2obj see the [#vol2obj-parameters](vol2obj Parameters) section.
+* For more details on extracting frames with vol2obj see the [vol2obj Parameters](#vol2obj-parameters) section.
 * You only need to use the command line for running the *vol2obj* tool's command.
 * Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the file.
 * If header and sequence input files mismatch, expect an error.
