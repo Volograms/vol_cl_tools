@@ -113,10 +113,8 @@ There is a more detailed answer at https://apple.stackexchange.com/questions/414
 
 ## vol2obj Parameters
 
-Included in the `samples/` directory are several shapes, encoded as 1-frame volograms for testing, and video textures in MP4 and WebM using numbered frames, which can be useful for debugging sequences.
-
-As a demonstration, we can convert one of these small samples to a Wavefront OBJ,
-and open it in 3D modelling software.
+Volograms are multi-frame 3D animations that are currently split into 3 files: { header, sequence, video texture }.
+By default *vol2obj* will only convert the first frame from a vologram, but we can actually export any frame, a range of frames, or all the frames to .obj files.
 
 If we run the vol2obj program from a terminal, without arguments, it will tell us the inputs required:
 
@@ -134,25 +132,43 @@ Options:
   --help            This text.
 ```
 
-Volograms are currently split into 3 files: { header, sequence, video texture }.
-We give vol2obj a matching header and sequence from the samples folder, and use the "counter" test video as a video texture.
-We can specify a single frame to output with e.g. `-f 0`, for the first frame, or use `--all` to write out all of the frames as separate OBJ files.
+### Examples
+
+* Convert the first 5 frames (0 to 4, inclusive) from a vologram in directory `..\1625472326152_ld\` to numbered .objs:
 
 ```
-./vol2obj.bin -h samples/cube_hdr.vol -s samples/cube_seq.vol -v samples/counter.webm -f 0
+vol2obj.exe -f 0 -l 4 --output_dir range -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
 ```
 
-We should get as output the following files, with the frame number postfixed to the name.
+* Convert all the frames from a vologram:
 
 ```
-output_frame_00000000.jpg  -- JPEG texture.
-output_frame_00000000.mtl  -- Wavefront MTL material file.
-output_frame_00000000.obj  -- Wavefront OBJ mesh file. 
+vol2obj.exe --all --output_dir all_my_frames -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
 ```
 
-We can now import the .obj into Blender (or any other 3D software), and confirm that the cube shape has loaded and the first frame from the video has been applied as a texture:
+* Convert only frame 12 from a vologram:
 
-![Blender shows our cube sample, and also found the MTL and JPG texture, showing the "0000" text from the first video frame..](cubeblender.png)
+```
+vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
+```
+
+In this last case the output in the terminal shows us that it has written the following files into the directory we asked for:
+
+```
+vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
+
+Created directory `only12/`
+Using output directory = `only12/`
+Converting
+  frames                 12-12
+  header                `..\1625472326152_ld\header.vols`
+  sequence              `..\1625472326152_ld\sequence_0.vols`
+  video texture `..\1625472326152_ld\texture_2048_h264.mp4`
+Wrote mesh file `only12/output_frame_00000012.obj`
+Wrote material file `only12/output_frame_00000012.mtl`
+Wrote image file `only12/output_frame_00000012.jpg`
+Vologram processing completed.
+```
 
 ## Security and Fuzzing
 
