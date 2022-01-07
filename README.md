@@ -3,25 +3,38 @@ Command-line tools for converting [Volograms](https://www.volograms.com/)' 3D fo
 
 Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environments.
 
-## User Guide - How to Turn a *Volu* Capture into a 3D Model You Can Use
+## Quick-Start - Turn a *Volu* Capture into a 3D Model You Can Use
 
 The most common use of these tools is to convert 3D captures made with the [Volu](https://www.volograms.com/volu) phone app into
 a common 3D model format (Wavefront .obj) so that you can import it in Unity game projects, use for 3D printing, or use in other creative projects.
 
-What you need to do is:
+### Get the *vol2obj* Tool
 
-1. Get the *vol2obj* tool by downloading a [release](https://github.com/Volograms/vol_cl_tools/releases) (Windows), or by [compiling it](#compiling-the-tools) (other operating systems).
-2. Get a vologram off your phone. On iOS you can find these using the *Files* system app, browsing to *Volu*, then *Volograms*. The volograms appear as numbered folders. If you tap-and-hold you can *share* one of these folders with yourself by e.g. email and *Mail Drop* or another file transfer method. Usually it is zipped before sending.
-3. On the computer you have *vol2obj*, download and unzip the vologram folder you got off your phone, and put it in the same folder as the *vol2obj* tool so it's easy to find. Your vologram capture's folder will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
-4. Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
-5. Change directory to the folder containing vol2obj.
-6. Run *vol2obj* and point it to your vologram's header, sequence, and texture files. e.g. if your vologram capture is in a folder called `1625575284206_ld` and it's in the same directory as the *vol2obj* program:
+* Get the *vol2obj* tool by downloading a [release](https://github.com/Volograms/vol_cl_tools/releases) (Windows),
+* or by [compiling it](#compiling-the-tools) (other operating systems).
+
+### Get a Vologram You Have Captured Off Your Phone
+
+* On iOS you can find these using the *Files* system app, browsing to *Volu*, then *Volograms*.
+* The volograms appear as numbered folders.
+* If you tap-and-hold you can *share* one of these folders with yourself by e.g. email and *Mail Drop* or another file transfer method.
+* Usually it is zipped before sending.
+
+* On the computer you have *vol2obj*, download and unzip the vologram folder you got off your phone.
+* Put it in the same folder as the *vol2obj* tool so it's easy to find.
+* Your vologram capture's folder will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
+* Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
+* Change directory to the folder containing vol2obj.
+
+### Convert a Vologram Frame to a .obj
+
+* Run *vol2obj* and point it to your vologram's header, sequence, and texture files. e.g. if your vologram capture is in a folder called `1625575284206_ld` and it's in the same directory as the *vol2obj* program:
 
 ```
 .\vol2obj.exe -h 1625575284206_ld\header.vols -s 1625575284206_ld\sequence_0.vols -v 1625575284206_ld\texture_2048_h264.mp4 --output_dir my_first_capture
 ```
 
-This will create a directory called `my_first_capture` containing the first frame of your vologram sequence as the following files:
+* This will create a directory called `my_first_capture` containing the first frame of your vologram sequence as the following files:
 
 ```
 output_frame_00000000.jpg  -- JPEG texture.
@@ -29,7 +42,22 @@ output_frame_00000000.mtl  -- Wavefront MTL material file.
 output_frame_00000000.obj  -- Wavefront OBJ mesh file. 
 ```
 
-You should be able to import or drag-and-drop this into most 3D software and 3D game engines. Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the file.
+### Import the .obj into 3D Software
+
+You should be able to import or drag-and-drop this into most 3D software and 3D game engines.
+
+* In [Blender](https://www.blender.org/) *File->Import->Wavefront (.obj)* and navigate to the .obj in your `my_first_capture` directory. If *Image Search* is ticked it should also find the texture image.
+* In [Unity](https://unity.com/) right click in the *Assets* pane and *Import New Asset*. Select the .obj and matching .jpg from `my_first_capture`. Drag the new model into the *Scene* pane. Then drag the new texture onto the model in the scene to apply it.
+
+### Tips
+
+* For more details on extracting frames with vol2obj see the [vol2obj-parameters](vol2obj Parameters) section.
+* You only need to use the command line for running the *vol2obj* tool's command.
+* Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the file.
+* To avoid mixing up files bewteen captures:
+  * Create a new output directory using `--output_dir` for each capture you process.
+  * Keep each capture's header, sequence, and video files together in their unique folder. You can rename this to a more meaningful name e.g. from `1625575284206_ld/` to `martial_arts_pose/`
+* If header and sequence input files mismatch, expect an error.
 
 ## Repository Contents ##
 
@@ -83,7 +111,7 @@ export LIBRARY_PATH=/opt/homebrew/lib
 
 There is a more detailed answer at https://apple.stackexchange.com/questions/414622/installing-a-c-c-library-with-homebrew-on-m1-macs
 
-## Running an Example with vol2obj
+## vol2obj Parameters
 
 Included in the `samples/` directory are several shapes, encoded as 1-frame volograms for testing, and video textures in MP4 and WebM using numbered frames, which can be useful for debugging sequences.
 
@@ -114,7 +142,7 @@ We can specify a single frame to output with e.g. `-f 0`, for the first frame, o
 ./vol2obj.bin -h samples/cube_hdr.vol -s samples/cube_seq.vol -v samples/counter.webm -f 0
 ```
 
-We should get as output the following files:
+We should get as output the following files, with the frame number postfixed to the name.
 
 ```
 output_frame_00000000.jpg  -- JPEG texture.
@@ -125,10 +153,6 @@ output_frame_00000000.obj  -- Wavefront OBJ mesh file.
 We can now import the .obj into Blender (or any other 3D software), and confirm that the cube shape has loaded and the first frame from the video has been applied as a texture:
 
 ![Blender shows our cube sample, and also found the MTL and JPG texture, showing the "0000" text from the first video frame..](cubeblender.png)
-
-### Caveats with vol2obj
-
-* If header and sequence files mismatch, expect an error.
 
 ## Security and Fuzzing
 
