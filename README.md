@@ -8,7 +8,7 @@ Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environme
 
 ## Quick-Start - Turn a *Volu* Capture into a 3D Model You Can Use
 
-### Get the *vol2obj* Tool
+### Get the vol2obj Tool
 
 * Get the *vol2obj* tool by downloading a [release](https://github.com/Volograms/vol_cl_tools/releases) (Windows),
 * or by [compiling it](#compiling-the-tools) (other operating systems).
