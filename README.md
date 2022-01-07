@@ -1,12 +1,12 @@
 # vol_cl_tools
 Command-line tools for converting [Volograms](https://www.volograms.com/)' 3D format.
 
+The most common use of these tools is to convert 3D captures of people made with the [Volu](https://www.volograms.com/volu) phone app into
+a common 3D model format (Wavefront .obj) so that you can import it in Unity 3D game projects, use for 3D printing, or in other creative projects.
+
 Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environments.
 
 ## Quick-Start - Turn a *Volu* Capture into a 3D Model You Can Use
-
-The most common use of these tools is to convert 3D captures made with the [Volu](https://www.volograms.com/volu) phone app into
-a common 3D model format (Wavefront .obj) so that you can import it in Unity game projects, use for 3D printing, or use in other creative projects.
 
 ### Get the *vol2obj* Tool
 
@@ -54,10 +54,10 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 * For more details on extracting frames with vol2obj see the [vol2obj-parameters](vol2obj Parameters) section.
 * You only need to use the command line for running the *vol2obj* tool's command.
 * Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the file.
-* To avoid mixing up files bewteen captures:
+* If header and sequence input files mismatch, expect an error.
+* To avoid mixing up files between captures:
   * Create a new output directory using `--output_dir` for each capture you process.
   * Keep each capture's header, sequence, and video files together in their unique folder. You can rename this to a more meaningful name e.g. from `1625575284206_ld/` to `martial_arts_pose/`
-* If header and sequence input files mismatch, expect an error.
 
 ## Repository Contents ##
 
