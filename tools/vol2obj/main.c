@@ -231,8 +231,8 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
 
   fprintf( f_ptr, "#Exported by Volograms vols2obj\n" );
   if ( output_mtl_filename ) {
+    fprintf( f_ptr, "mtllib %s\n", output_mtl_filename ); // mtllib must go before usemtl or some viewers won't load the texture.
     fprintf( f_ptr, "usemtl %s\n", material_name );
-    fprintf( f_ptr, "mtllib %s\n", output_mtl_filename );
   }
 
   assert( vertices_ptr && "Hey if there are no vertex points Anton should make sure that is accounted for in the f section" );
