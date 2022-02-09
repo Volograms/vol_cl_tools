@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.4.2
+ * Version   | 0.4.3
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -51,6 +51,7 @@
  *
  * History
  * -----------
+ * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.
  * - 0.4.2   (2022/01/06) - Tweaks to Windows builds to remove warnings and errors on git-bash & msvc.
  * - 0.4.1   (2022/01/06) - Fix to normals (x axis flip).
  * - 0.4.0   (2022/01/06) - `--output_dir` cl flag.
