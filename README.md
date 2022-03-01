@@ -102,7 +102,7 @@ README.md            -- This file.
 make
 ```
 
-* To build ct-vols tool (*nix only):
+* To build cutvols tool (*nix only):
 
 ```
 cd tools/ct_vols/

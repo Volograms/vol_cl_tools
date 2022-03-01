@@ -33,13 +33,13 @@
  *
  * Usage Instructions
  * ---------------------
- * Run the `ct-vols` tool from a command line to get a list of options.
+ * Run the `cutvols` tool from a command line to get a list of options.
  * The tool takes, as input, a directory containing a vologram's files: header.vols, sequence.vols and a video texture.
  * Supply a range of frames to cut out of the sequence.
  * And a new vologram will be created in a given output directory, containing only those frames specified.
  * For example:
  *
- *   ./ct-vols -i my_vologram/ -o output/ -f 10 -l 20
+ *   ./cutvols -i my_vologram/ -o output/ -f 10 -l 20
  *
  * Will cut the frames 10-20 from the vologram contained in directory "my_vologram/" and create a directory called "output/"
  * where it will write the new vologram's files.
