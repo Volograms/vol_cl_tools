@@ -89,7 +89,7 @@ README.md            -- This file.
 
 ## Compiling the Tools
 
-* Make sure that Git and [Git LFS](https://git-lfs.github.com/) are installed on your system.
+* Make sure that Git is installed on your system.
 * Clone this repository.
 * Install FFmpeg development libraries:
     * For Windows these can be found under the `thirdparty/ffmpeg_lgpl_free/` sub-directory, and you don't need to do anything.
@@ -103,11 +103,8 @@ make
 ```
 
 * To build cutvols tool (*nix only):
-    * Install dependencies FFmpeg and Boost libraries. e.g. on Debian or Ubuntu:
-
-```
-apt-get update && apt-get install -y --no-install-recommends cmake ffmpeg libboost-all-dev
-```
+    * Install dependencies CMake, FFmpeg, and Boost libraries. e.g. on Debian or Ubuntu: `sudo apt-get update && apt-get install --no-install-recommends cmake ffmpeg libboost-all-dev`.
+    * Invoke CMake then compile:
 
 ```
 cd tools/cutvols/
