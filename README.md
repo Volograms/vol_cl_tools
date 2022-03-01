@@ -64,6 +64,7 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 | Tool    | Version | Description                                                                                   |
 | ------- | ------- | --------------------------------------------------------------------------------------------- |
 | vol2obj | 0.4.3   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
+| ct_vols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
 
 Further tools to be added: obj2vol, sequence cutting and manipulation. 
 
@@ -79,7 +80,8 @@ samples/cube_seq.vol -- Vologram sequence for the 1-frame 3D cube.
 samples/quad_hdr.vol -- Vologram header for a 1-frame 3D rectangle.
 samples/quad_seq.vol -- Vologram sequence for the 1-frame 3D rectangle.
 third_party/         -- Third-party libraries used by tools.
-tools/vol2obj/       -- The vol2obj tool.
+tools/ct_vols/       -- The vologram sequence cutting tool.
+tools/vol2obj/       -- The vol2obj converter tool.
 LICENSE              -- Licence details for this project.
 Makefile             -- GNU Makefile to build tools with Clang or GCC.
 README.md            -- This file.
@@ -94,9 +96,18 @@ README.md            -- This file.
     * On Ubuntu `sudo apt-get install build-essential clang libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev libswscale-dev`
     * On MacOS `brew install ffmpeg`.
 
-* To build all tools programs with Clang.
+* To build vol2obj tool with Clang:
 
 ```
+make
+```
+
+* To build cutvols tool (*nix only):
+
+```
+cd tools/ct_vols/
+mkdir -p build/ && cd build/
+cmake ..
 make
 ```
 
