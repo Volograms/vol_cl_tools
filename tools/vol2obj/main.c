@@ -486,7 +486,30 @@ int main( int argc, char** argv ) {
   int last_frame  = 0;
   bool all_frames = false;
 
-  { // command line parameters
+  // paths for drag-and-drop directory
+  char dad_hdr_str[2048], dad_seq_str[2048], dad_vid_str[2048];
+  dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = '\0';
+
+  // check for drag-and-drop directory
+  if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
+    int len = strlen( argv[1] );
+    strncat( dad_hdr_str, argv[1], 2047 );
+    strncat( dad_seq_str, argv[1], 2047 );
+    strncat( dad_vid_str, argv[1], 2047 );
+    if ( argv[1][len - 1] != '\\' && argv[1][len - 1] != '/' ) {
+      strncat( dad_hdr_str, "/", 2047 );
+      strncat( dad_seq_str, "/", 2047 );
+      strncat( dad_vid_str, "/", 2047 );
+    }
+    strncat( dad_hdr_str, "header.vols", 2047 );
+    strncat( dad_seq_str, "sequence_0.vols", 2047 );
+    strncat( dad_vid_str, "texture_2048_h264.mp4", 2047 );
+    _input_header_filename   = dad_hdr_str;
+    _input_sequence_filename = dad_seq_str;
+    _input_video_filename    = dad_vid_str;
+  } else {
+    // regular command line parameters
+
     my_argc = argc;
     my_argv = argv;
     if ( _check_param( "--all" ) ) { all_frames = true; }
