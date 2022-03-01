@@ -113,6 +113,8 @@ cmake ..
 make
 ```
 
+* Usage instructions for cutvols are commented at the top of the [main.cpp](https://github.com/Volograms/vol_cl_tools/blob/main/tools/cutvols/main.cpp) file.
+
 ### Troubleshooting
 
 Homebrew on M1 Macs may require environment variables to be set: 
