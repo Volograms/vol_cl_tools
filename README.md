@@ -103,6 +103,11 @@ make
 ```
 
 * To build cutvols tool (*nix only):
+    * Install dependencies FFmpeg and Boost libraries. e.g. on Debian or Ubuntu:
+
+```
+apt-get update && apt-get install -y --no-install-recommends cmake ffmpeg libboost-all-dev
+```
 
 ```
 cd tools/cutvols/
