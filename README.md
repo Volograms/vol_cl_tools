@@ -6,6 +6,32 @@ a common 3D model format (Wavefront .obj) so that you can import it in Unity 3D 
 
 Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environments.
 
+## Repository Contents ##
+
+| Tool    | Version | Description                                                                                   |
+| ------- | ------- | --------------------------------------------------------------------------------------------- |
+| vol2obj | 0.4.3   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
+| cutvols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
+
+```
+lib/                 -- Core vologram processing libraries, vol_av (video textures) and vol_geom (vologram meshes).
+samples/             -- Simple example volograms;
+samples/cone_hdr.vol -- Vologram header for a 1-frame 3D cone.
+samples/cone_seq.vol -- Vologram sequence for the 1-frame 3D cone.
+samples/counter.mp4  -- Video texture of numbered frames, useful for debugging.
+samples/counter.webm -- A WebM VP9 encoding of the same video texture, for comparison.
+samples/cube_hdr.vol -- Vologram header for a 1-frame 3D cube.
+samples/cube_seq.vol -- Vologram sequence for the 1-frame 3D cube.
+samples/quad_hdr.vol -- Vologram header for a 1-frame 3D rectangle.
+samples/quad_seq.vol -- Vologram sequence for the 1-frame 3D rectangle.
+third_party/         -- Third-party libraries used by tools.
+tools/cutvols/       -- The vologram sequence cutting tool.
+tools/vol2obj/       -- The vol2obj converter tool.
+LICENSE              -- Licence details for this project.
+Makefile             -- GNU Makefile to build tools with Clang or GCC.
+README.md            -- This file.
+```
+
 ## Quick-Start - Turn a *Volu* Capture into a 3D Model You Can Use
 
 ### Get the vol2obj Tool
@@ -59,34 +85,6 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 * To avoid mixing up files between captures:
   * Create a new output directory using `--output_dir` for each capture you process.
   * Keep each capture's header, sequence, and video files together in their unique folder. You can rename this to a more meaningful name e.g. from `1625575284206_ld/` to `martial_arts_pose/`
-
-## Repository Contents ##
-
-| Tool    | Version | Description                                                                                   |
-| ------- | ------- | --------------------------------------------------------------------------------------------- |
-| vol2obj | 0.4.3   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
-| cutvols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
-
-Further tools to be added: obj2vol, sequence cutting and manipulation. 
-
-```
-lib/                 -- Core vologram processing libraries, vol_av (video textures) and vol_geom (vologram meshes).
-samples/             -- Simple example volograms;
-samples/cone_hdr.vol -- Vologram header for a 1-frame 3D cone.
-samples/cone_seq.vol -- Vologram sequence for the 1-frame 3D cone.
-samples/counter.mp4  -- Video texture of numbered frames, useful for debugging.
-samples/counter.webm -- A WebM VP9 encoding of the same video texture, for comparison.
-samples/cube_hdr.vol -- Vologram header for a 1-frame 3D cube.
-samples/cube_seq.vol -- Vologram sequence for the 1-frame 3D cube.
-samples/quad_hdr.vol -- Vologram header for a 1-frame 3D rectangle.
-samples/quad_seq.vol -- Vologram sequence for the 1-frame 3D rectangle.
-third_party/         -- Third-party libraries used by tools.
-tools/cutvols/       -- The vologram sequence cutting tool.
-tools/vol2obj/       -- The vol2obj converter tool.
-LICENSE              -- Licence details for this project.
-Makefile             -- GNU Makefile to build tools with Clang or GCC.
-README.md            -- This file.
-```
 
 ## Compiling the Tools
 
