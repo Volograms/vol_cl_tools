@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.4.3
+ * Version   | 0.5.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -42,6 +42,7 @@
  * - other file writing libraries
  * - add support for non-u16 indices
  * - validate params and optional params to write_obj()
+ * - on Windows, drag a folder containing volograms files (header, sequence, texture) onto vol2obj.exe to export the first frame as an OBJ.
  *
  * TESTING
  * - fuzzing
@@ -51,6 +52,7 @@
  *
  * History
  * -----------
+ * - 0.5.0   (2022/04/22) - Includes drag-and-drop of vologram folders for Windows.
  * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.
  * - 0.4.2   (2022/01/06) - Tweaks to Windows builds to remove warnings and errors on git-bash & msvc.
  * - 0.4.1   (2022/01/06) - Fix to normals (x axis flip).
