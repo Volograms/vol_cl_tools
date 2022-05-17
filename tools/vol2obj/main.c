@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.5.0
+ * Version   | 0.6.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -42,16 +42,15 @@
  * - other file writing libraries
  * - add support for non-u16 indices
  * - validate params and optional params to write_obj()
- * - on Windows, drag a folder containing volograms files (header, sequence, texture) onto vol2obj.exe to export the first frame as an OBJ.
- *
+ * 
  * TESTING
  * - fuzzing
- * - try exporting a definitely-not-a-keyframe vologram frame (e.g. frame 20 from Take07 mario)
  * - test a mesh that doesnt have normals
  * - and a mesh with 32-bit indices
  *
  * History
  * -----------
+ * - 0.6.0   (2022/06/17) - Fix for drag-and-drop not finding the new 1k video texture files.
  * - 0.5.0   (2022/04/22) - Includes drag-and-drop of vologram folders for Windows.
  * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.
  * - 0.4.2   (2022/01/06) - Tweaks to Windows builds to remove warnings and errors on git-bash & msvc.
@@ -483,14 +482,18 @@ static bool _make_dir( const char* dir_path ) {
   return false;
 }
 
+/// Default string names for Volu video texture files.
+#define VOL_VID_STR_2048 "texture_2048_h264.mp4"
+#define VOL_VID_STR_1024 "texture_1024_h264.mp4"
+
 int main( int argc, char** argv ) {
   int first_frame = 0;
   int last_frame  = 0;
   bool all_frames = false;
 
   // paths for drag-and-drop directory
-  char dad_hdr_str[2048], dad_seq_str[2048], dad_vid_str[2048];
-  dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = '\0';
+  char dad_hdr_str[2048], dad_seq_str[2048], dad_vid_str[2048], test_vid_str[2048];
+  dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
 
   // check for drag-and-drop directory
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
@@ -505,7 +508,16 @@ int main( int argc, char** argv ) {
     }
     strncat( dad_hdr_str, "header.vols", 2047 );
     strncat( dad_seq_str, "sequence_0.vols", 2047 );
-    strncat( dad_vid_str, "texture_2048_h264.mp4", 2047 );
+    // Try to use a 2k texture if one is in the folder, otherwise go for 1024x1024.
+    strncat( test_vid_str, dad_vid_str, 2047 );
+    strncat( test_vid_str, VOL_VID_STR_2048, 2047 );
+    FILE* ft_ptr = fopen( test_vid_str, "rb" );
+    if ( !ft_ptr ) {
+      strncat( dad_vid_str, VOL_VID_STR_1024, 2047 );
+    } else {
+      fclose( ft_ptr );
+      strncat( dad_vid_str, VOL_VID_STR_2048, 2047 );
+    }
     _input_header_filename   = dad_hdr_str;
     _input_sequence_filename = dad_seq_str;
     _input_video_filename    = dad_vid_str;
