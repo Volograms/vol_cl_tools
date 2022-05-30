@@ -4,7 +4,7 @@ Command-line tools for converting [Volograms](https://www.volograms.com/)' 3D fo
 The most common use of these tools is to convert 3D captures of people made with the [Volu](https://www.volograms.com/volu) phone app into
 a common 3D model format (Wavefront .obj) so that you can import it in Unity 3D game projects, use for 3D printing, or in other creative projects.
 
-Tools can be built and run for GNU/Linux, MacOS, and Microsoft Windows environments.
+Tools can be built and run for GNU/Linux, macOS, and Microsoft Windows environments.
 
 ## Quick-Start - Turn a *Volu* Capture into a 3D Model You Can Use
 
@@ -99,7 +99,7 @@ README.md            -- This file.
 * Install FFmpeg development libraries:
     * For Windows these can be found under the `thirdparty/ffmpeg_lgpl_free/` sub-directory, and you don't need to do anything.
     * On Ubuntu `sudo apt-get install build-essential clang libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev libswscale-dev`
-    * On MacOS `brew install ffmpeg`.
+    * On macOS `brew install ffmpeg`.
 
 * To build vol2obj tool with Clang:
 
