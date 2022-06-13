@@ -7,7 +7,7 @@
 CC          = clang
 # -Werror is useful when upgrading the API as it upgrades deprecation warnings to errors.
 FLAGS       = -std=c99 -m64 -Wfatal-errors -pedantic -Wextra -Wall
-#DEBUG       = -g -DVOL_AV_DEBUG -DVOL_GEOM_DEBUG
+DEBUG       = -g -DVOL_AV_DEBUG -DVOL_GEOM_DEBUG
 #SANS        = -fsanitize=address -fsanitize=undefined 
 INC_DIR     = -I lib/ -I thirdparty/
 SRC_AV      = lib/vol_av.c
