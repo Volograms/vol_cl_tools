@@ -110,6 +110,7 @@ static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000
 static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
 static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
 static char _material_name[MAX_FILENAME_LEN];        // e.g. `volograms_mtl_00000000`
+static char _prefix_str[MAX_FILENAME_LEN];           // defaults to `output_frame_`
 
 /// Globals for parsing the command line arguments in a function.
 static int my_argc;
@@ -384,12 +385,12 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
 
     for ( int i = first_frame_idx; i <= last_frame_idx; i++ ) {
-      sprintf( _output_mesh_filename, "output_frame_%08i.obj", i );
-      sprintf( _output_mtl_filename, "output_frame_%08i.mtl", i );
+      sprintf( _output_mesh_filename, "%s%08i.obj", _prefix_str, i );
+      sprintf( _output_mtl_filename, "%s%08i.mtl", _prefix_str, i );
       sprintf( _material_name, "vol_mtl_%08i", i );
       switch ( _img_fmt ) {
-      case IMG_FMT_PPM: sprintf( _output_img_filename, "output_frame_%08i.ppm", i ); break;
-      case IMG_FMT_JPG: sprintf( _output_img_filename, "output_frame_%08i.jpg", i ); break;
+      case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
+      case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
       } // endswitch
 
@@ -437,8 +438,8 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
         return false;
       }
       switch ( _img_fmt ) {
-      case IMG_FMT_PPM: sprintf( _output_img_filename, "output_frame_%08i.ppm", i ); break;
-      case IMG_FMT_JPG: sprintf( _output_img_filename, "output_frame_%08i.jpg", i ); break;
+      case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
+      case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
       } // endswitch
       if ( !_write_video_frame_to_image( _output_img_filename ) ) { fprintf( stderr, "WARNING: failed to write video frame %i to file\n", first_frame_idx ); }
@@ -495,6 +496,8 @@ int main( int argc, char** argv ) {
   char dad_hdr_str[MAX_FILENAME_LEN], dad_seq_str[MAX_FILENAME_LEN], dad_vid_str[MAX_FILENAME_LEN], test_vid_str[MAX_FILENAME_LEN];
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
 
+  strcpy( _prefix_str, "output_frame_" ); // set the default
+
   // check for drag-and-drop directory
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
     int len = strlen( argv[1] );
@@ -526,13 +529,16 @@ int main( int argc, char** argv ) {
 
     my_argc = argc;
     my_argv = argv;
-    if ( _check_param( "--all" ) ) { all_frames = true; }
-    int f_idx          = _check_param( "-f" );
-    int h_idx          = _check_param( "-h" );
-    int l_idx          = _check_param( "-l" );
-    int output_dir_idx = _check_param( "--output_dir" );
-    int s_idx          = _check_param( "-s" );
-    int v_idx          = _check_param( "-v" );
+    // TODO(Anton) ugly, replace with a function that takes 2 args
+    int all_frames_idx = _check_param( "-a" ) ? _check_param( "-a" ) : _check_param( "--all" );
+    int output_dir_idx = _check_param( "-d" ) ? _check_param( "-d" ) : _check_param( "--output_dir" );
+    int f_idx          = _check_param( "-f" ) ? _check_param( "-f" ) : _check_param( "--first" );
+    int h_idx          = _check_param( "-h" ) ? _check_param( "-h" ) : _check_param( "--header" );
+    int l_idx          = _check_param( "-l" ) ? _check_param( "-l" ) : _check_param( "--last" );
+    int prefix_idx     = _check_param( "-p" ) ? _check_param( "-p" ) : _check_param( "--prefix" );
+    int s_idx          = _check_param( "-s" ) ? _check_param( "-s" ) : _check_param( "--sequence" );
+    int v_idx          = _check_param( "-v" ) ? _check_param( "-v" ) : _check_param( "--video" );
+    all_frames         = all_frames_idx > 0;
     if ( f_idx ) {
       if ( f_idx >= argc - 1 ) {
         fprintf( stderr, "ERROR: -f parameter must be followed by a frame number.\n" );
@@ -555,6 +561,19 @@ int main( int argc, char** argv ) {
       }
       last_frame  = atoi( argv[l_idx + 1] );
       first_frame = first_frame >= last_frame ? last_frame : first_frame;
+    }
+    if ( prefix_idx ) {
+      if ( prefix_idx >= argc - 1 ) {
+        fprintf( stderr, "ERROR: --prefix parameter must be followed by a string of characters.\n" );
+        return 1;
+      }
+      _prefix_str[0] = '\0';
+      int plen       = (int)strlen( argv[prefix_idx + 1] );
+      int l          = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+      strncat( _prefix_str, argv[prefix_idx + 1], l );
+      printf( "Using output prefix = `%s`\n", _prefix_str );
+
+      // NOTE(Anton) - Could parse here to exclude invalid chars but we have to know something about the encoding; it could be UTF-8 or UTF-16.
     }
     if ( output_dir_idx ) {
       if ( output_dir_idx >= argc - 1 ) {
@@ -594,14 +613,15 @@ int main( int argc, char** argv ) {
     if ( _check_param( "--help" ) || !h_idx || !s_idx || !v_idx ) {
       printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
       printf( "Options:\n" );
-      printf( "  --all             Process all frames in vologram.\n" );
-      printf( "                    If given then paramters -f and -l are ignored.\n" );
-      printf( "  -f N              Process the frame number given by N (frames start at 0). Default value 0.\n" );
-      printf( "                    If the -l parameter is not given then only this single frame is processed.\n" );
-      printf( "  -l N              Process up to specific frame number given by N.\n" );
-      printf( "                    Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.\n" );
-      printf( "  --output_dir      Specify a directory to write output files to. The default is the current working directory.\n" );
-      printf( "  --help            This text.\n" );
+      printf( "\n--all, -a\nProcess all frames in vologram.\n" );
+      printf( "If given then paramters -f and -l are ignored.\n" );
+      printf( "\n--output_dir, -d PATH\nSpecify a directory to write output files to. The default is the current working directory.\n" );
+      printf( "\n--first, -f N\nProcess the frame number given by N (frames start at 0). Default value 0.\n" );
+      printf( "If the -l parameter is not given then only this single frame is processed.\n" );
+      printf( "\n--last, -l N\nProcess up to specific frame number given by N.\n" );
+      printf( "Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.\n" );
+      printf( "\n--prefix, -p STR\nA prefix string to write into output files. Default is `output_frame_`.\n" );
+      printf( "\n--help\nThis text.\n" );
 
       return 0;
     }
