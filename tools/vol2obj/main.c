@@ -98,6 +98,48 @@ typedef enum img_fmt_t {
   IMG_FMT_MAX      // just for counting # image formats
 } img_fmt_t;
 
+/** Command-line flags. */
+typedef struct cl_flag_t {
+  const char* long_str;  // e.g. "--version"
+  const char* short_str; // e.g. "-v"
+  const char* help_str;  // e.g. "Prints the version of the software."
+} cl_flag_t;
+
+#define N_CL_FLAGS 10
+static cl_flag_t _cl_flags[N_CL_FLAGS] = {
+  { "--all", "-a",                                                                                     //
+    "Create output files for, and process, all frames found in the sequence.\n"                        //
+    "If given then paramters -f and -l are ignored.\n" },                                              //
+  { "--header", "-h", "Required. The next argument gives the path to the header.vols file.\n" },       //
+  { "--help", NULL, "Prints this text.\n" },                                                           //
+  { "--first", "-f",                                                                                   //
+    "The next argument gives the frame number of the first frame to process (frames start at 0).\n"    //
+    "If the -l parameter is not given then only this single frame is processed.\n"                     //
+    "Default value 0.\n" },                                                                            //
+  { "--last", "-l",                                                                                    //
+    "The next argument gives the frame number of the last frame to process.\n"                         //
+    "Can be used with -f to process a range of frames from first to last, inclusive.\n" },             //
+  { "--output_dir", "-o",                                                                              //
+    "The next argument gives the path to a directory to write output files into.\n"                    //
+    "Default is the current working directory.\n" },                                                   //
+  { "--prefix", "-p",                                                                                  //
+    "The next argument gives the prefix to use for output filenames.\n"                                //
+    "Default is output_frame_.\n" },                                                                   //
+  { "--sequence", "-s", "Required. The next argument gives the path to the sequence_0.vols file.\n" }, //
+  { "--video", "-v", "Required. The next argument gives the path to the video texture file.\n" }       //
+};
+
+static void _print_cl_flags( void ) {
+  printf( "Options:\n" );
+  for ( int i = 0; i < N_CL_FLAGS; i++ ) {
+    if ( _cl_flags[i].long_str ) { printf( "%s", _cl_flags[i].long_str ); }
+    if ( _cl_flags[i].long_str && _cl_flags[i].short_str ) { printf( ", " ); }
+    if ( _cl_flags[i].short_str ) { printf( "%s", _cl_flags[i].short_str ); }
+    if ( _cl_flags[i].long_str || _cl_flags[i].short_str || _cl_flags[i].short_str ) { printf( "\n" ); }
+    if ( _cl_flags[i].help_str ) { printf( "%s\n", _cl_flags[i].help_str ); }
+  }
+}
+
 static img_fmt_t _img_fmt = IMG_FMT_JPG;             // Image format to use for output.
 static int _jpeg_quality  = 95;                      // Arbitrary choice of 95% quality v size based on GIMP's default.
 static vol_av_video_t _av_info;                      // Audio-video information from vol_av library.
@@ -271,7 +313,8 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
     // uint8_t* i_u8_ptr   = (uint8_t*)indices_ptr;
     uint16_t* i_u16_ptr = (uint16_t*)indices_ptr;
     // OBJ spec:
-    // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts at 1"
+    // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts
+    // at 1"
     for ( int i = 0; i < n_indices / 3; i++ ) {
       // index types: 0=unsigned byte, 1=unsigned short, 2=unsigned int.
       /* Integer[] if # vertices >= 65535 (Unity Version < 2017.3 does not support Integer indices) Short[] if # vertices < 65535 */
@@ -612,17 +655,7 @@ int main( int argc, char** argv ) {
     }
     if ( _check_param( "--help" ) || !h_idx || !s_idx || !v_idx ) {
       printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
-      printf( "Options:\n" );
-      printf( "\n--all, -a\nProcess all frames in vologram.\n" );
-      printf( "If given then paramters -f and -l are ignored.\n" );
-      printf( "\n--output_dir, -d PATH\nSpecify a directory to write output files to. The default is the current working directory.\n" );
-      printf( "\n--first, -f N\nProcess the frame number given by N (frames start at 0). Default value 0.\n" );
-      printf( "If the -l parameter is not given then only this single frame is processed.\n" );
-      printf( "\n--last, -l N\nProcess up to specific frame number given by N.\n" );
-      printf( "Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.\n" );
-      printf( "\n--prefix, -p STR\nA prefix string to write into output files. Default is `output_frame_`.\n" );
-      printf( "\n--help\nThis text.\n" );
-
+      _print_cl_flags();
       return 0;
     }
   }
