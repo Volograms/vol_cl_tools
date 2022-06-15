@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.6.0
+ * Version   | 0.7.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -50,6 +50,7 @@
  *
  * History
  * -----------
+ * - 0.7.0   (2022/07/15) - --prefix flag, and updated vol_libs.
  * - 0.6.0   (2022/06/17) - Fix for drag-and-drop not finding the new 1k video texture files.
  * - 0.5.0   (2022/04/22) - Includes drag-and-drop of vologram folders for Windows.
  * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.

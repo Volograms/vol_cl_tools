@@ -70,7 +70,7 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 
 | Tool    | Version | Description                                                                                   |
 |---------|---------|-----------------------------------------------------------------------------------------------|
-| vol2obj | 0.6.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
+| vol2obj | 0.7.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
 | cutvols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
 
 Further tools to be added: obj2vol, sequence cutting and manipulation. 
