@@ -6,8 +6,10 @@
 
 CC          = clang
 # -Werror is useful when upgrading the API as it upgrades deprecation warnings to errors.
+# D_POSIX_C_SOURCE flag includes POSIX commands like ftello() that are not in strict C. Alternatively; -std=gnu99.
+# D_FILE_OFFSET_BITS enforces 64-bit file offsets for large file IO, even on 32-bit platforms.
 FLAGS       = -std=c99 -m64 -Wfatal-errors -pedantic -Wextra -Wall
-DEBUG       = -g -DVOL_AV_DEBUG -DVOL_GEOM_DEBUG
+DEBUG       = -g -DVOL_AV_DEBUG -DVOL_GEOM_DEBUG -D_POSIX_C_SOURCE=200808L -D_FILE_OFFSET_BITS=64
 #SANS        = -fsanitize=address -fsanitize=undefined 
 INC_DIR     = -I lib/ -I thirdparty/
 SRC_AV      = lib/vol_av.c

@@ -430,7 +430,7 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
  */
 static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames ) {
   { // mesh and video processing
-    if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info ) ) {
+    if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, true ) ) {
       fprintf( stderr, "ERROR: failed to open geometry files %s %s\n", _input_header_filename, _input_sequence_filename );
       return false;
     }
