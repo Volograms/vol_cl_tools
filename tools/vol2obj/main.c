@@ -624,7 +624,7 @@ int main( int argc, char** argv ) {
       fprintf( stderr, "ERROR: Video argument, -v MYVIDEO.vols, is mandatory.\n" );
       return 1;
     }
-		// Check for this: `./vol2obj -h -s sequence -v video`, where `-s` is interpreted as the header path.
+    // Check for this: `./vol2obj -h -s sequence -v video`, where `-s` is interpreted as the header path.
     for ( int i = 0; i < CL_MAX; i++ ) {
       if ( flag_indices[i] == flag_indices[CL_HEADER] + 1 ) {
         fprintf( stderr, "ERROR: Header argument, -h, must be followed by a path to a file.\n" );
