@@ -501,7 +501,10 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: fprintf( stderr, "ERROR: No valid image format selected\n" ); return false;
       } // endswitch
-      if ( !_write_video_frame_to_image( _output_img_filename ) ) { fprintf( stderr, "WARNING: failed to write video frame %i to file\n", first_frame_idx ); }
+      if ( !_write_video_frame_to_image( _output_img_filename ) ) {
+        fprintf( stderr, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
+        return false; // make sure we stop the processing at this point rather than carry on.
+      }
     }
 
     if ( !vol_av_close( &_av_info ) ) {
@@ -608,6 +611,13 @@ int main( int argc, char** argv ) {
     _input_video_filename    = dad_vid_str;
   } else {
     // Check for command line parameters
+		
+    if ( argc < 2 || _check_param( "--help" ) ) {
+      printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
+      _print_cl_flags();
+      return 0;
+    }
+
     int flag_indices[CL_MAX];
     memset( flag_indices, 0, sizeof( int ) * CL_MAX );
     for ( int i = 0; i < CL_MAX; i++ ) { flag_indices[i] = _check_cl_option( _cl_flags[i].long_str, _cl_flags[i].short_str ); }
@@ -712,11 +722,6 @@ int main( int argc, char** argv ) {
       }
       _input_video_filename = argv[flag_indices[CL_VIDEO] + 1];
     }
-    if ( _check_param( "--help" ) || !flag_indices[CL_HEADER] || !flag_indices[CL_SEQUENCE] || !flag_indices[CL_VIDEO] ) {
-      printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
-      _print_cl_flags();
-      return 0;
-    }
   }
 
   if ( all_frames ) {
@@ -729,6 +734,7 @@ int main( int argc, char** argv ) {
   }
 
   if ( !_process_vologram( first_frame, last_frame, all_frames ) ) { return 1; }
+
   printf( "Vologram processing completed.\n" );
 
   return 0;
