@@ -735,7 +735,10 @@ int main( int argc, char** argv ) {
 
       // If path doesn't exist try making that folder.
       if ( !_does_dir_exist( _output_dir_path ) ) {
-        if ( !_make_dir( _output_dir_path ) ) { _output_dir_path[0] = '\0'; }
+        if ( !_make_dir( _output_dir_path ) ) {
+          _output_dir_path[0] = '\0';
+          return 1;
+        }
       }
       _printlog( _LOG_TYPE_INFO, "Using output directory = `%s`\n", _output_dir_path );
     }
