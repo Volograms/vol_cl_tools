@@ -90,6 +90,12 @@
 
 #define MAX_FILENAME_LEN 4096 // Maximum file path length
 
+/** Colour formatting of printfs for status messages. */
+static const char* STRC_DEFAULT = "\x1B[0m";
+static const char* STRC_RED     = "\x1B[31m";
+static const char* STRC_GREEN   = "\x1B[32m";
+static const char* STRC_YELLOW  = "\x1B[33m";
+
 /** Different output image format options.
 NOTE(Anton) We could add DDS/ktx/basis here.
 */
@@ -565,7 +571,7 @@ static int _find_invalid_user_arg() {
 #define VOL_VID_STR_1024 "texture_1024_h264.mp4"
 
 int main( int argc, char** argv ) {
-  // paths for drag-and-drop directory
+  // Paths for drag-and-drop directory.
   char dad_hdr_str[MAX_FILENAME_LEN], dad_seq_str[MAX_FILENAME_LEN], dad_vid_str[MAX_FILENAME_LEN], test_vid_str[MAX_FILENAME_LEN];
   int first_frame = 0;
   int last_frame  = 0;
@@ -574,16 +580,16 @@ int main( int argc, char** argv ) {
   my_argc        = argc;
   my_argv        = argv;
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
-  strcpy( _prefix_str, "output_frame_" ); // set the default
+  strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
 
   // Check for invalid arguments.
   int inv_idx = _find_invalid_user_arg();
   if ( inv_idx > 0 ) {
-    fprintf( stderr, "ERROR: Option `%s` is not recognised. Use option --help to print available options.\n", argv[inv_idx] );
+    fprintf( stderr, "%sOption `%s` is not recognised. Run with --help to print available options.\n%s", STRC_YELLOW, argv[inv_idx], STRC_DEFAULT );
     return 1;
   }
 
-  // check for drag-and-drop directory
+  // Check for drag-and-drop directory.
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
     int len = strlen( argv[1] );
     strncat( dad_hdr_str, argv[1], MAX_FILENAME_LEN - 1 );
@@ -610,8 +616,8 @@ int main( int argc, char** argv ) {
     _input_sequence_filename = dad_seq_str;
     _input_video_filename    = dad_vid_str;
   } else {
-    // Check for command line parameters
-		
+    // Check for command line parameters.
+
     if ( argc < 2 || _check_param( "--help" ) ) {
       printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
       _print_cl_flags();
@@ -623,29 +629,29 @@ int main( int argc, char** argv ) {
     for ( int i = 0; i < CL_MAX; i++ ) { flag_indices[i] = _check_cl_option( _cl_flags[i].long_str, _cl_flags[i].short_str ); }
     // Make sure mandatory flags are supplied.
     if ( flag_indices[CL_HEADER] <= 0 || flag_indices[CL_HEADER] + 1 >= argc ) {
-      fprintf( stderr, "ERROR: Header argument, -h MYHEADER.vols, is mandatory.\n" );
+      fprintf( stderr, "%sHeader argument, -h MYHEADER.vols, is mandatory. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
       return 1;
     }
     if ( flag_indices[CL_SEQUENCE] <= 0 || flag_indices[CL_SEQUENCE] + 1 >= argc ) {
-      fprintf( stderr, "ERROR: Sequence argument, -s MYSEQUENCE.vols, is mandatory.\n" );
+      fprintf( stderr, "%sSequence argument, -s MYSEQUENCE.vols, is mandatory. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
       return 1;
     }
     if ( flag_indices[CL_VIDEO] <= 0 || flag_indices[CL_VIDEO] + 1 >= argc ) {
-      fprintf( stderr, "ERROR: Video argument, -v MYVIDEO.vols, is mandatory.\n" );
+      fprintf( stderr, "%sVideo argument, -v MYVIDEO.vols, is mandatory. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
       return 1;
     }
     // Check for this: `./vol2obj -h -s sequence -v video`, where `-s` is interpreted as the header path.
     for ( int i = 0; i < CL_MAX; i++ ) {
       if ( flag_indices[i] == flag_indices[CL_HEADER] + 1 ) {
-        fprintf( stderr, "ERROR: Header argument, -h, must be followed by a path to a file.\n" );
+        fprintf( stderr, "%sHeader argument, -h, must be followed by a path to a file. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       if ( flag_indices[i] == flag_indices[CL_SEQUENCE] + 1 ) {
-        fprintf( stderr, "ERROR: Sequence argument, -s, must be followed by a path to a file.\n" );
+        fprintf( stderr, "%sSequence argument, -s, must be followed by a path to a file. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       if ( flag_indices[i] == flag_indices[CL_VIDEO] + 1 ) {
-        fprintf( stderr, "ERROR: Video argument, -v, must be followed by a path to a file.\n" );
+        fprintf( stderr, "%sVideo argument, -v, must be followed by a path to a file. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
     }
@@ -653,7 +659,7 @@ int main( int argc, char** argv ) {
     all_frames = flag_indices[CL_ALL_FRAMES] > 0;
     if ( flag_indices[CL_FIRST] ) {
       if ( flag_indices[CL_FIRST] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -f parameter must be followed by a frame number.\n" );
+        fprintf( stderr, "%s-f parameter must be followed by a frame number. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       first_frame = atoi( argv[flag_indices[CL_FIRST] + 1] );
@@ -661,14 +667,14 @@ int main( int argc, char** argv ) {
     }
     if ( flag_indices[CL_HEADER] ) {
       if ( flag_indices[CL_HEADER] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -h parameter must be followed by a file path.\n" );
+        fprintf( stderr, "%s-h parameter must be followed by a file path. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       _input_header_filename = argv[flag_indices[CL_HEADER] + 1];
     }
     if ( flag_indices[CL_LAST] ) {
       if ( flag_indices[CL_LAST] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -l parameter must be followed by a frame number.\n" );
+        fprintf( stderr, "%s-l parameter must be followed by a frame number. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       last_frame  = atoi( argv[flag_indices[CL_LAST] + 1] );
@@ -676,7 +682,7 @@ int main( int argc, char** argv ) {
     }
     if ( flag_indices[CL_PREFIX] ) {
       if ( flag_indices[CL_PREFIX] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: --prefix parameter must be followed by a string of characters.\n" );
+        fprintf( stderr, "%s--prefix parameter must be followed by a string of characters. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       _prefix_str[0] = '\0';
@@ -689,7 +695,7 @@ int main( int argc, char** argv ) {
     }
     if ( flag_indices[CL_OUTPUT_DIR] ) {
       if ( flag_indices[CL_OUTPUT_DIR] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: --output_dir parameter must be followed by a file path.\n" );
+        fprintf( stderr, "%s--output_dir parameter must be followed by a file path. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       _output_dir_path[0] = '\0';
@@ -702,7 +708,7 @@ int main( int argc, char** argv ) {
       if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
       strncat( _output_dir_path, "/", MAX_FILENAME_LEN - 1 );
 
-      // if path doesn't exist try making that folder.
+      // If path doesn't exist try making that folder.
       if ( !_does_dir_exist( _output_dir_path ) ) {
         if ( !_make_dir( _output_dir_path ) ) { _output_dir_path[0] = '\0'; }
       }
@@ -710,14 +716,14 @@ int main( int argc, char** argv ) {
     }
     if ( flag_indices[CL_SEQUENCE] ) {
       if ( flag_indices[CL_SEQUENCE] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -s parameter must be followed by a file path.\n" );
+        fprintf( stderr, "%s-s parameter must be followed by a file path. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       _input_sequence_filename = argv[flag_indices[CL_SEQUENCE] + 1];
     }
     if ( flag_indices[CL_VIDEO] ) {
       if ( flag_indices[CL_VIDEO] >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -v parameter must be followed by a file path.\n" );
+        fprintf( stderr, "%s-v parameter must be followed by a file path. Run with --help for details.%s\n", STRC_YELLOW, STRC_DEFAULT );
         return 1;
       }
       _input_video_filename = argv[flag_indices[CL_VIDEO] + 1];
@@ -726,16 +732,16 @@ int main( int argc, char** argv ) {
 
   if ( all_frames ) {
     first_frame = last_frame = 0;
-    printf( "Converting\n  frames\t\t all\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t`%s`\n", _input_header_filename, _input_sequence_filename,
+    printf( "Converting\n  frames\t\t all\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t\t`%s`\n", _input_header_filename, _input_sequence_filename,
       _input_video_filename );
   } else {
-    printf( "Converting\n  frames\t\t %i-%i\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t`%s`\n", first_frame, last_frame, _input_header_filename,
+    printf( "Converting\n  frames\t\t %i-%i\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t\t`%s`\n", first_frame, last_frame, _input_header_filename,
       _input_sequence_filename, _input_video_filename );
   }
 
   if ( !_process_vologram( first_frame, last_frame, all_frames ) ) { return 1; }
 
-  printf( "Vologram processing completed.\n" );
+  printf( "%sVologram processing completed.%s\n", STRC_GREEN, STRC_DEFAULT );
 
   return 0;
 }
