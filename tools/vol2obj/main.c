@@ -607,21 +607,6 @@ static bool _make_dir( const char* dir_path ) {
   return false;
 }
 
-/** @return Index of the first invalid-looking user -flag, or 0 if none found. */
-static int _find_invalid_user_arg() {
-  for ( int a_i = 1; a_i < my_argc; a_i++ ) {
-    if ( my_argv[a_i][0] != '-' ) { continue; }
-    for ( int c_i = 0; c_i < CL_MAX; c_i++ ) {
-      if ( ( _cl_flags[c_i].short_str && 0 == strncasecmp( my_argv[a_i], _cl_flags[c_i].short_str, 4 ) ) ||
-           ( _cl_flags[c_i].long_str && 0 == strncasecmp( my_argv[a_i], _cl_flags[c_i].long_str, 32 ) ) ) {
-        return 0;
-      }
-    }
-    return a_i;
-  }
-  return 0;
-}
-
 /// Default string names for Volu video texture files.
 #define VOL_VID_STR_2048 "texture_2048_h264.mp4"
 #define VOL_VID_STR_1024 "texture_1024_h264.mp4"
@@ -637,13 +622,6 @@ int main( int argc, char** argv ) {
   my_argv        = argv;
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
   strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
-
-  // Check for invalid arguments.
-  int inv_idx = _find_invalid_user_arg();
-  if ( inv_idx > 0 ) {
-    _printlog( _LOG_TYPE_WARNING, "Option `%s` is not recognised. Run with --help to print available options.\n", argv[inv_idx] );
-    return 1;
-  }
 
   // Check for drag-and-drop directory.
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
