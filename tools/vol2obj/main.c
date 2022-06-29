@@ -41,7 +41,6 @@
  * - flags to request PNG or JPEG or DDS using eg stb_image_write
  * - other file writing libraries
  * - add support for non-u16 indices
- * - validate params and optional params to write_obj()
  *
  * TESTING
  * - fuzzing
@@ -50,7 +49,7 @@
  *
  * History
  * -----------
- * - 0.7.0   (2022/07/15) - --prefix flag, and updated vol_libs.
+ * - 0.7.0   (2022/07/29) - --prefix flag, and updated vol_libs, updated cl param parsing system.
  * - 0.6.0   (2022/06/17) - Fix for drag-and-drop not finding the new 1k video texture files.
  * - 0.5.0   (2022/04/22) - Includes drag-and-drop of vologram folders for Windows.
  * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.
