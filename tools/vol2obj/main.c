@@ -131,6 +131,7 @@ typedef struct cl_flag_t {
   const char* long_str;  // e.g. "--header"
   const char* short_str; // e.g. "-h"
   const char* help_str;  // e.g. "Required. The next argument gives the path to the header.vols file.\n"
+  int n_required_args;   // Number of parameters following that are required.
 } cl_flag_t;
 
 /// Globals for parsing the command line arguments in a function.
@@ -142,26 +143,31 @@ typedef enum cl_flag_enum_t { CL_ALL_FRAMES, CL_HEADER, CL_HELP, CL_FIRST, CL_LA
 
 /** All command line flags are specified here. Note that this order must correspond to the ordering in cl_flag_enum_t. */
 static cl_flag_t _cl_flags[CL_MAX] = {
-  { "--all", "-a",                                                                                     // CL_ALL_FRAMES
-    "Create output files for, and process, all frames found in the sequence.\n"                        //
-    "If given then paramters -f and -l are ignored.\n" },                                              //
-  { "--header", "-h", "Required. The next argument gives the path to the header.vols file.\n" },       // CL_HEADER
-  { "--help", NULL, "Prints this text.\n" },                                                           // CL_HELP
-  { "--first", "-f",                                                                                   // CL_FIRST
-    "The next argument gives the frame number of the first frame to process (frames start at 0).\n"    //
-    "If the -l parameter is not given then only this single frame is processed.\n"                     //
-    "Default value 0.\n" },                                                                            //
-  { "--last", "-l",                                                                                    // CL_LAST
-    "The next argument gives the frame number of the last frame to process.\n"                         //
-    "Can be used with -f to process a range of frames from first to last, inclusive.\n" },             //
-  { "--output-dir", "-o",                                                                              // CL_OUTPUT_DIR
-    "The next argument gives the path to a directory to write output files into.\n"                    //
-    "Default is the current working directory.\n" },                                                   //
-  { "--prefix", "-p",                                                                                  // CL_PREFIX
-    "The next argument gives the prefix to use for output filenames.\n"                                //
-    "Default is output_frame_.\n" },                                                                   //
-  { "--sequence", "-s", "Required. The next argument gives the path to the sequence_0.vols file.\n" }, // CL_SEQUENCE
-  { "--video", "-v", "Required. The next argument gives the path to the video texture file.\n" }       // CL_VIDEO
+  { "--all", "-a",                                                                                        // CL_ALL_FRAMES
+    "Create output files for, and process, all frames found in the sequence.\n"                           //
+    "If given then paramters -f and -l are ignored.\n",                                                   //
+    0 },                                                                                                  //
+  { "--header", "-h", "Required. The next argument gives the path to the header.vols file.\n", 1 },       // CL_HEADER
+  { "--help", NULL, "Prints this text.\n", 0 },                                                           // CL_HELP
+  { "--first", "-f",                                                                                      // CL_FIRST
+    "The next argument gives the frame number of the first frame to process (frames start at 0).\n"       //
+    "If the -l parameter is not given then only this single frame is processed.\n"                        //
+    "Default value 0.\n",                                                                                 //
+    1 },                                                                                                  //
+  { "--last", "-l",                                                                                       // CL_LAST
+    "The next argument gives the frame number of the last frame to process.\n"                            //
+    "Can be used with -f to process a range of frames from first to last, inclusive.\n",                  //
+    1 },                                                                                                  //
+  { "--output-dir", "-o",                                                                                 // CL_OUTPUT_DIR
+    "The next argument gives the path to a directory to write output files into.\n"                       //
+    "Default is the current working directory.\n",                                                        //
+    1 },                                                                                                  //
+  { "--prefix", "-p",                                                                                     // CL_PREFIX
+    "The next argument gives the prefix to use for output filenames.\n"                                   //
+    "Default is output_frame_.\n",                                                                        //
+    1 },                                                                                                  //
+  { "--sequence", "-s", "Required. The next argument gives the path to the sequence_0.vols file.\n", 1 }, // CL_SEQUENCE
+  { "--video", "-v", "Required. The next argument gives the path to the video texture file.\n", 1 }       // CL_VIDEO
 };
 
 /** Used to print all the options in the command line flags struct for the help text. */
@@ -176,26 +182,52 @@ static void _print_cl_flags( void ) {
   }
 }
 
-/** Look for a string amongst command-line arguments.
- * @param check_str The string to match (case insensitive).
- * @return If not found returns 0. Otherwise returns the index number into argv matching `check_str`.
- */
-static int _check_param( const char* check_str ) {
-  if ( !check_str ) { return 0; }
-  for ( int i = 1; i < my_argc; i++ ) {
-    if ( 0 == strcasecmp( check_str, my_argv[i] ) ) { return i; }
-  }
-  return 0;
+static bool _check_cl_option( int argv_idx, const char* long_str, const char* short_str ) {
+  if ( long_str && ( 0 == strcasecmp( long_str, my_argv[argv_idx] ) ) ) { return true; }
+  if ( short_str && ( 0 == strcasecmp( short_str, my_argv[argv_idx] ) ) ) { return true; }
+  return false;
 }
 
-/** Checks for either of the long --version or short -v string in command line arguments, and if one is found returns the index of that. Prefers the long
- * string index. */
-static int _check_cl_option( const char* long_str, const char* short_str ) {
-  int long_idx = 0, short_idx = 0;
-  if ( long_str ) { long_idx = _check_param( long_str ); }
-  if ( short_str ) { short_idx = _check_param( short_str ); }
-  if ( long_idx ) { return long_idx; }
-  return short_idx;
+/** If command-line options are valid, their index in argv is stored here, otherwise it is 0. */
+static int _option_arg_indices[CL_MAX];
+
+/** Loop over all the command line arguments and make sure they all have the right bits with them and there are not unknowns.
+ * Registers any valid params found, with their index in argv, in _option_arg_indices.
+ * @returns Returns false if anything is out of order, or an unrecognised flag is found.
+ */
+static bool _evaluate_params() {
+  for ( int argv_idx = 1; argv_idx < my_argc; argv_idx++ ) {
+    bool found_valid_arg = false;
+    // If starts with a '-' check if a known option.
+    if ( '-' != my_argv[argv_idx][0] ) {
+      _printlog( _LOG_TYPE_WARNING, "Argument '%s' is an invalid option. Perhaps a '-' is missing? Run with --help for details.\n", my_argv[argv_idx] );
+      return false;
+    }
+    // Check if it matches any known options (including if its a repeat of an earlier-specified option).
+    for ( int clo_idx = 0; clo_idx < CL_MAX; clo_idx++ ) {
+      if ( !_check_cl_option( argv_idx, _cl_flags[clo_idx].long_str, _cl_flags[clo_idx].short_str ) ) { continue; }
+      // If valid check it has the correct number of following params e.g. -h has one, and we don't interpret the next option flag as this one's parameter.
+      if ( _cl_flags[clo_idx].n_required_args > 0 ) {
+        for ( int following_idx = 1; following_idx < _cl_flags[clo_idx].n_required_args + 1; following_idx++ ) {
+          if ( argv_idx + _cl_flags[clo_idx].n_required_args >= my_argc || '-' == my_argv[argv_idx + following_idx][0] ) {
+            printf( "argvidx = %i, nargs= %i, argc = %i\n", argv_idx, _cl_flags[clo_idx].n_required_args, my_argc );
+            _printlog( _LOG_TYPE_WARNING, "Argument '%s' is not followed by a valid parameter. Run with --help for details.\n", my_argv[argv_idx] );
+            return false;
+          }
+        }
+      }
+      // If all good, register the index of the option. so e.g. _option_arg_indices[CL_HEADER] = 2
+      _option_arg_indices[clo_idx] = argv_idx;
+      argv_idx += _cl_flags[clo_idx].n_required_args;
+      found_valid_arg = true;
+      break;
+    } // endfor clo_idx
+    if ( !found_valid_arg ) {
+      _printlog( _LOG_TYPE_WARNING, "Argument '%s' is an unknown option. Run with --help for details.\n", my_argv[argv_idx] );
+      return false;
+    }
+  } // endfor argv_idx
+  return true;
 }
 
 static img_fmt_t _img_fmt = IMG_FMT_JPG;             // Image format to use for output.
@@ -642,120 +674,67 @@ int main( int argc, char** argv ) {
     _input_video_filename    = dad_vid_str;
   } else {
     // Check for command line parameters.
-
-    if ( argc < 2 || _check_param( "--help" ) ) {
-      printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
-      _print_cl_flags();
-      return 0;
-    }
-
-    int flag_indices[CL_MAX];
-    memset( flag_indices, 0, sizeof( int ) * CL_MAX );
-    for ( int i = 0; i < CL_MAX; i++ ) { flag_indices[i] = _check_cl_option( _cl_flags[i].long_str, _cl_flags[i].short_str ); }
-    // Make sure mandatory flags are supplied.
-    if ( flag_indices[CL_HEADER] <= 0 || flag_indices[CL_HEADER] + 1 >= argc ) {
-      _printlog( _LOG_TYPE_WARNING, "Header argument, -h MYHEADER.vols, is mandatory. Run with --help for details.\n" );
-      return 1;
-    }
-    if ( flag_indices[CL_SEQUENCE] <= 0 || flag_indices[CL_SEQUENCE] + 1 >= argc ) {
-      _printlog( _LOG_TYPE_WARNING, "Sequence argument, -s MYSEQUENCE.vols, is mandatory. Run with --help for details.\n" );
-      return 1;
-    }
-    if ( flag_indices[CL_VIDEO] <= 0 || flag_indices[CL_VIDEO] + 1 >= argc ) {
-      _printlog( _LOG_TYPE_WARNING, "Video argument, -v MYVIDEO.vols, is mandatory. Run with --help for details.\n" );
-      return 1;
-    }
-    // Check for this: `./vol2obj -h -s sequence -v video`, where `-s` is interpreted as the header path.
-    for ( int i = 0; i < CL_MAX; i++ ) {
-      if ( flag_indices[i] == flag_indices[CL_HEADER] + 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "Header argument, -h, must be followed by a path to a file. Run with --help for details.\n" );
+    if ( !_evaluate_params() ) { return 1; }
+    { // Register any user-set options.
+      if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
+        printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
+        _print_cl_flags();
+        return 0;
+      }
+      all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
+      if ( _option_arg_indices[CL_HEADER] ) {
+        _input_header_filename = my_argv[_option_arg_indices[CL_HEADER] + 1];
+      } else {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --header is missing. Run with --help for details.\n" );
         return 1;
       }
-      if ( flag_indices[i] == flag_indices[CL_SEQUENCE] + 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "Sequence argument, -s, must be followed by a path to a file. Run with --help for details.\n" );
-        return 1;
+      if ( _option_arg_indices[CL_FIRST] ) {
+        first_frame = atoi( my_argv[_option_arg_indices[CL_FIRST] + 1] );
+        last_frame  = last_frame < first_frame ? first_frame : last_frame;
       }
-      if ( flag_indices[i] == flag_indices[CL_VIDEO] + 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "Video argument, -v, must be followed by a path to a file. Run with --help for details.\n" );
-        return 1;
+      if ( _option_arg_indices[CL_LAST] ) {
+        last_frame  = atoi( my_argv[_option_arg_indices[CL_LAST] + 1] );
+        first_frame = first_frame >= last_frame ? last_frame : first_frame;
       }
-    }
-
-    all_frames = flag_indices[CL_ALL_FRAMES] > 0;
-    if ( flag_indices[CL_FIRST] ) {
-      if ( flag_indices[CL_FIRST] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "-f parameter must be followed by a frame number. Run with --help for details.\n" );
-        return 1;
-      }
-      first_frame = atoi( argv[flag_indices[CL_FIRST] + 1] );
-      last_frame  = last_frame < first_frame ? first_frame : last_frame;
-    }
-    if ( flag_indices[CL_HEADER] ) {
-      if ( flag_indices[CL_HEADER] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "-h parameter must be followed by a file path. Run with --help for details.\n" );
-        return 1;
-      }
-      _input_header_filename = argv[flag_indices[CL_HEADER] + 1];
-    }
-    if ( flag_indices[CL_LAST] ) {
-      if ( flag_indices[CL_LAST] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "-l parameter must be followed by a frame number. Run with --help for details.\n" );
-        return 1;
-      }
-      last_frame  = atoi( argv[flag_indices[CL_LAST] + 1] );
-      first_frame = first_frame >= last_frame ? last_frame : first_frame;
-    }
-    if ( flag_indices[CL_PREFIX] ) {
-      if ( flag_indices[CL_PREFIX] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "--prefix parameter must be followed by a string of characters. Run with --help for details.\n" );
-        return 1;
-      }
-      _prefix_str[0] = '\0';
-      int plen       = (int)strlen( argv[flag_indices[CL_PREFIX] + 1] );
-      int l          = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
-      strncat( _prefix_str, argv[flag_indices[CL_PREFIX] + 1], l );
-      _printlog( _LOG_TYPE_INFO, "Using output prefix = `%s`\n", _prefix_str );
-
-      // NOTE(Anton) - Could parse here to exclude invalid chars but we have to know something about the encoding; it could be UTF-8 or UTF-16.
-    }
-    if ( flag_indices[CL_OUTPUT_DIR] ) {
-      if ( flag_indices[CL_OUTPUT_DIR] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "--output_dir parameter must be followed by a file path. Run with --help for details.\n" );
-        return 1;
-      }
-      _output_dir_path[0] = '\0';
-      int plen            = (int)strlen( argv[flag_indices[CL_OUTPUT_DIR] + 1] );
-      int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
-      strncat( _output_dir_path, argv[flag_indices[CL_OUTPUT_DIR] + 1], l );
-
-      // remove any existing path slashes and put a *nix slash at the end
-      if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
-      if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
-      strncat( _output_dir_path, "/", MAX_FILENAME_LEN - 1 );
-
-      // If path doesn't exist try making that folder.
-      if ( !_does_dir_exist( _output_dir_path ) ) {
-        if ( !_make_dir( _output_dir_path ) ) {
-          _output_dir_path[0] = '\0';
-          return 1;
+      if ( _option_arg_indices[CL_OUTPUT_DIR] ) {
+        _output_dir_path[0] = '\0';
+        int plen            = (int)strlen( my_argv[_option_arg_indices[CL_OUTPUT_DIR] + 1] );
+        int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+        strncat( _output_dir_path, my_argv[_option_arg_indices[CL_OUTPUT_DIR] + 1], l );
+        // remove any existing path slashes and put a *nix slash at the end
+        if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
+        if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
+        strncat( _output_dir_path, "/", MAX_FILENAME_LEN - 1 );
+        // If path doesn't exist try making that folder.
+        if ( !_does_dir_exist( _output_dir_path ) ) {
+          if ( !_make_dir( _output_dir_path ) ) {
+            _output_dir_path[0] = '\0';
+            return 1;
+          }
         }
+        _printlog( _LOG_TYPE_INFO, "Using output directory = `%s`\n", _output_dir_path );
       }
-      _printlog( _LOG_TYPE_INFO, "Using output directory = `%s`\n", _output_dir_path );
-    }
-    if ( flag_indices[CL_SEQUENCE] ) {
-      if ( flag_indices[CL_SEQUENCE] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "-s parameter must be followed by a file path. Run with --help for details.\n" );
+      if ( _option_arg_indices[CL_PREFIX] ) {
+        _prefix_str[0] = '\0';
+        int plen       = (int)strlen( my_argv[_option_arg_indices[CL_PREFIX] + 1] );
+        int l          = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+        strncat( _prefix_str, my_argv[_option_arg_indices[CL_PREFIX] + 1], l );
+        _printlog( _LOG_TYPE_INFO, "Using output prefix = `%s`\n", _prefix_str );
+        // NOTE(Anton) - Could parse here to exclude invalid chars but we have to know something about the encoding; it could be UTF-8 or UTF-16.
+      }
+      if ( _option_arg_indices[CL_SEQUENCE] ) {
+        _input_sequence_filename = my_argv[_option_arg_indices[CL_SEQUENCE] + 1];
+      } else {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --sequence is missing. Run with --help for details.\n" );
         return 1;
       }
-      _input_sequence_filename = argv[flag_indices[CL_SEQUENCE] + 1];
-    }
-    if ( flag_indices[CL_VIDEO] ) {
-      if ( flag_indices[CL_VIDEO] >= argc - 1 ) {
-        _printlog( _LOG_TYPE_WARNING, "-v parameter must be followed by a file path. Run with --help for details.\n" );
+      if ( _option_arg_indices[CL_VIDEO] ) {
+        _input_video_filename = argv[_option_arg_indices[CL_VIDEO] + 1];
+      } else {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --video is missing. Run with --help for details.\n" );
         return 1;
       }
-      _input_video_filename = argv[flag_indices[CL_VIDEO] + 1];
-    }
+    } // endblock register user-set options.
   }
 
   if ( all_frames ) {
