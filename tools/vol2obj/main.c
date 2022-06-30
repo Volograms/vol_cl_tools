@@ -3,7 +3,7 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.6.0
+ * Version   | 0.7.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
  * Copyright | 2021, Volograms (http://volograms.com/)
  * Language  | C99
@@ -41,7 +41,6 @@
  * - flags to request PNG or JPEG or DDS using eg stb_image_write
  * - other file writing libraries
  * - add support for non-u16 indices
- * - validate params and optional params to write_obj()
  *
  * TESTING
  * - fuzzing
@@ -50,6 +49,7 @@
  *
  * History
  * -----------
+ * - 0.7.0   (2022/07/29) - --prefix flag, and updated vol_libs, updated cl param parsing system.
  * - 0.6.0   (2022/06/17) - Fix for drag-and-drop not finding the new 1k video texture files.
  * - 0.5.0   (2022/04/22) - Includes drag-and-drop of vologram folders for Windows.
  * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.
@@ -66,6 +66,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb/stb_image_write.h"
 #include <assert.h>
+#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -89,6 +90,32 @@
 
 #define MAX_FILENAME_LEN 4096 // Maximum file path length
 
+/** Colour formatting of printfs for status messages. */
+static const char* STRC_DEFAULT = "\x1B[0m";
+static const char* STRC_RED     = "\x1B[31m";
+static const char* STRC_GREEN   = "\x1B[32m";
+static const char* STRC_YELLOW  = "\x1B[33m";
+
+typedef enum _log_type { _LOG_TYPE_INFO = 0, _LOG_TYPE_DEBUG, _LOG_TYPE_WARNING, _LOG_TYPE_ERROR, _LOG_TYPE_SUCCESS } _log_type;
+
+static void _printlog( _log_type log_type, const char* message_str, ... ) {
+  FILE* stream_ptr = stdout;
+  if ( _LOG_TYPE_ERROR == log_type ) {
+    stream_ptr = stderr;
+    fprintf( stderr, "%s", STRC_RED );
+  } else if ( _LOG_TYPE_WARNING == log_type ) {
+    stream_ptr = stderr;
+    fprintf( stderr, "%s", STRC_YELLOW );
+  } else if ( _LOG_TYPE_SUCCESS == log_type ) {
+    fprintf( stderr, "%s", STRC_GREEN );
+  }
+  va_list arg_ptr;
+  va_start( arg_ptr, message_str );
+  vfprintf( stream_ptr, message_str, arg_ptr );
+  va_end( arg_ptr );
+  fprintf( stream_ptr, "%s", STRC_DEFAULT );
+}
+
 /** Different output image format options.
 NOTE(Anton) We could add DDS/ktx/basis here.
 */
@@ -97,6 +124,110 @@ typedef enum img_fmt_t {
   IMG_FMT_JPG,     // uses library
   IMG_FMT_MAX      // just for counting # image formats
 } img_fmt_t;
+
+/** Command-line flags. */
+typedef struct cl_flag_t {
+  const char* long_str;  // e.g. "--header"
+  const char* short_str; // e.g. "-h"
+  const char* help_str;  // e.g. "Required. The next argument gives the path to the header.vols file.\n"
+  int n_required_args;   // Number of parameters following that are required.
+} cl_flag_t;
+
+/// Globals for parsing the command line arguments in a function.
+static int my_argc;
+static char** my_argv;
+
+/** Convience enum to index into the array of command-line flags by readable name. */
+typedef enum cl_flag_enum_t { CL_ALL_FRAMES, CL_HEADER, CL_HELP, CL_FIRST, CL_LAST, CL_OUTPUT_DIR, CL_PREFIX, CL_SEQUENCE, CL_VIDEO, CL_MAX } cl_flag_enum_t;
+
+/** All command line flags are specified here. Note that this order must correspond to the ordering in cl_flag_enum_t. */
+static cl_flag_t _cl_flags[CL_MAX] = {
+  { "--all", "-a",                                                                                        // CL_ALL_FRAMES
+    "Create output files for, and process, all frames found in the sequence.\n"                           //
+    "If given then paramters -f and -l are ignored.\n",                                                   //
+    0 },                                                                                                  //
+  { "--header", "-h", "Required. The next argument gives the path to the header.vols file.\n", 1 },       // CL_HEADER
+  { "--help", NULL, "Prints this text.\n", 0 },                                                           // CL_HELP
+  { "--first", "-f",                                                                                      // CL_FIRST
+    "The next argument gives the frame number of the first frame to process (frames start at 0).\n"       //
+    "If the -l parameter is not given then only this single frame is processed.\n"                        //
+    "Default value 0.\n",                                                                                 //
+    1 },                                                                                                  //
+  { "--last", "-l",                                                                                       // CL_LAST
+    "The next argument gives the frame number of the last frame to process.\n"                            //
+    "Can be used with -f to process a range of frames from first to last, inclusive.\n",                  //
+    1 },                                                                                                  //
+  { "--output-dir", "-o",                                                                                 // CL_OUTPUT_DIR
+    "The next argument gives the path to a directory to write output files into.\n"                       //
+    "Default is the current working directory.\n",                                                        //
+    1 },                                                                                                  //
+  { "--prefix", "-p",                                                                                     // CL_PREFIX
+    "The next argument gives the prefix to use for output filenames.\n"                                   //
+    "Default is output_frame_.\n",                                                                        //
+    1 },                                                                                                  //
+  { "--sequence", "-s", "Required. The next argument gives the path to the sequence_0.vols file.\n", 1 }, // CL_SEQUENCE
+  { "--video", "-v", "Required. The next argument gives the path to the video texture file.\n", 1 }       // CL_VIDEO
+};
+
+/** Used to print all the options in the command line flags struct for the help text. */
+static void _print_cl_flags( void ) {
+  printf( "Options:\n" );
+  for ( int i = 0; i < CL_MAX; i++ ) {
+    if ( _cl_flags[i].long_str ) { printf( "%s", _cl_flags[i].long_str ); }
+    if ( _cl_flags[i].long_str && _cl_flags[i].short_str ) { printf( ", " ); }
+    if ( _cl_flags[i].short_str ) { printf( "%s", _cl_flags[i].short_str ); }
+    if ( _cl_flags[i].long_str || _cl_flags[i].short_str || _cl_flags[i].short_str ) { printf( "\n" ); }
+    if ( _cl_flags[i].help_str ) { printf( "%s\n", _cl_flags[i].help_str ); }
+  }
+}
+
+static bool _check_cl_option( int argv_idx, const char* long_str, const char* short_str ) {
+  if ( long_str && ( 0 == strcasecmp( long_str, my_argv[argv_idx] ) ) ) { return true; }
+  if ( short_str && ( 0 == strcasecmp( short_str, my_argv[argv_idx] ) ) ) { return true; }
+  return false;
+}
+
+/** If command-line options are valid, their index in argv is stored here, otherwise it is 0. */
+static int _option_arg_indices[CL_MAX];
+
+/** Loop over all the command line arguments and make sure they all have the right bits with them and there are not unknowns.
+ * Registers any valid params found, with their index in argv, in _option_arg_indices.
+ * @returns Returns false if anything is out of order, or an unrecognised flag is found.
+ */
+static bool _evaluate_params() {
+  for ( int argv_idx = 1; argv_idx < my_argc; argv_idx++ ) {
+    bool found_valid_arg = false;
+    // If starts with a '-' check if a known option.
+    if ( '-' != my_argv[argv_idx][0] ) {
+      _printlog( _LOG_TYPE_WARNING, "Argument '%s' is an invalid option. Perhaps a '-' is missing? Run with --help for details.\n", my_argv[argv_idx] );
+      return false;
+    }
+    // Check if it matches any known options (including if its a repeat of an earlier-specified option).
+    for ( int clo_idx = 0; clo_idx < CL_MAX; clo_idx++ ) {
+      if ( !_check_cl_option( argv_idx, _cl_flags[clo_idx].long_str, _cl_flags[clo_idx].short_str ) ) { continue; }
+      // If valid check it has the correct number of following params e.g. -h has one, and we don't interpret the next option flag as this one's parameter.
+      if ( _cl_flags[clo_idx].n_required_args > 0 ) {
+        for ( int following_idx = 1; following_idx < _cl_flags[clo_idx].n_required_args + 1; following_idx++ ) {
+          if ( argv_idx + _cl_flags[clo_idx].n_required_args >= my_argc || '-' == my_argv[argv_idx + following_idx][0] ) {
+            printf( "argvidx = %i, nargs= %i, argc = %i\n", argv_idx, _cl_flags[clo_idx].n_required_args, my_argc );
+            _printlog( _LOG_TYPE_WARNING, "Argument '%s' is not followed by a valid parameter. Run with --help for details.\n", my_argv[argv_idx] );
+            return false;
+          }
+        }
+      }
+      // If all good, register the index of the option. so e.g. _option_arg_indices[CL_HEADER] = 2
+      _option_arg_indices[clo_idx] = argv_idx;
+      argv_idx += _cl_flags[clo_idx].n_required_args;
+      found_valid_arg = true;
+      break;
+    } // endfor clo_idx
+    if ( !found_valid_arg ) {
+      _printlog( _LOG_TYPE_WARNING, "Argument '%s' is an unknown option. Run with --help for details.\n", my_argv[argv_idx] );
+      return false;
+    }
+  } // endfor argv_idx
+  return true;
+}
 
 static img_fmt_t _img_fmt = IMG_FMT_JPG;             // Image format to use for output.
 static int _jpeg_quality  = 95;                      // Arbitrary choice of 95% quality v size based on GIMP's default.
@@ -110,21 +241,7 @@ static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000
 static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
 static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
 static char _material_name[MAX_FILENAME_LEN];        // e.g. `volograms_mtl_00000000`
-
-/// Globals for parsing the command line arguments in a function.
-static int my_argc;
-static char** my_argv;
-
-/** Look for a string amongst command-line arguments.
- * @param check_str The string to match (case insensitive).
- * @return If not found returns 0. Otherwise returns the index number into argv matching `check_str`.
- */
-static int _check_param( const char* check_str ) {
-  for ( int i = 1; i < my_argc; i++ ) {
-    if ( !strcasecmp( check_str, my_argv[i] ) ) { return i; }
-  }
-  return 0;
-}
+static char _prefix_str[MAX_FILENAME_LEN];           // defaults to `output_frame_`
 
 /// A homemade P3 ASCII PPM image writer. These images are very large, so only useful for debugging purposes.
 static bool write_rgb_image_to_ppm( const char* filename, uint8_t* image_ptr, int w, int h ) {
@@ -152,20 +269,23 @@ static bool _write_video_frame_to_image( const char* output_image_filename ) {
   switch ( _img_fmt ) {
   case IMG_FMT_PPM: {
     if ( !write_rgb_image_to_ppm( full_path, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
-      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", full_path );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
   case IMG_FMT_JPG: {
     if ( !stbi_write_jpg( full_path, _av_info.w, _av_info.h, 3, _av_info.pixels_ptr, _jpeg_quality ) ) {
-      fprintf( stderr, "ERROR: writing frame image file `%s`.\n", full_path );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
-  default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
+  default: {
+    _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" );
+    return false;
+  } break;
   } // endswitch
 
-  printf( "Wrote image file `%s`\n", full_path );
+  _printlog( _LOG_TYPE_INFO, "Wrote image file `%s`\n", full_path );
 
   return true;
 }
@@ -191,15 +311,15 @@ the map_Kd value is multiplied by the Kd value.
 
   FILE* f_ptr = fopen( full_path, "w" );
   if ( !f_ptr ) {
-    fprintf( stderr, "ERROR: opening file for writing `%s`\n", full_path );
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Opening file for writing `%s`\n", full_path );
     return false;
   }
   if ( fprintf( f_ptr, "newmtl %s\n", material_name ) < 0 ) {
-    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
   if ( fprintf( f_ptr, "map_Kd %s\nmap_Ka %s\n", image_filename, image_filename ) < 0 ) {
-    fprintf( stderr, "ERROR: writing to file `%s`, check permissions.\n", full_path );
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Writing to file `%s`, check permissions.\n", full_path );
     return false;
   }
   fprintf( f_ptr, "Ka 0.1 0.1 0.1\n" );
@@ -208,7 +328,7 @@ the map_Kd value is multiplied by the Kd value.
   fprintf( f_ptr, "d 1.0\nTr 0.0\n" );
   fprintf( f_ptr, "Ns 0.0\n" );
   fclose( f_ptr );
-  printf( "Wrote material file `%s`\n", full_path );
+  _printlog( _LOG_TYPE_INFO, "Wrote material file `%s`\n", full_path );
 
   return true;
 }
@@ -220,14 +340,14 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   int n_vertices, const float* texcoords_ptr, int n_texcoords, const float* normals_ptr, int n_normals, const void* indices_ptr, int n_indices, int index_type ) {
   if ( !output_mesh_filename ) { return false; }
 
-  // TODO(Anton) validate fprintfs here too
+  // TODO(Anton) validate fprintfs here too for e.g. failures when running out of disk space.
 
   char full_path[MAX_FILENAME_LEN];
   sprintf( full_path, "%s%s", _output_dir_path, output_mesh_filename );
 
   FILE* f_ptr = fopen( full_path, "w" );
   if ( !f_ptr ) {
-    fprintf( stderr, "ERROR: opening file for writing `%s`\n", full_path );
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Opening file for writing `%s`\n", full_path );
     return false;
   }
 
@@ -270,7 +390,8 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
     // uint8_t* i_u8_ptr   = (uint8_t*)indices_ptr;
     uint16_t* i_u16_ptr = (uint16_t*)indices_ptr;
     // OBJ spec:
-    // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts at 1"
+    // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts
+    // at 1"
     for ( int i = 0; i < n_indices / 3; i++ ) {
       // index types: 0=unsigned byte, 1=unsigned short, 2=unsigned int.
       /* Integer[] if # vertices >= 65535 (Unity Version < 2017.3 does not support Integer indices) Short[] if # vertices < 65535 */
@@ -284,7 +405,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   }
 
   fclose( f_ptr );
-  printf( "Wrote mesh file `%s`\n", full_path );
+  _printlog( _LOG_TYPE_INFO, "Wrote mesh file `%s`.\n", full_path );
 
   return true;
 }
@@ -308,7 +429,7 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
   { // get data pointers
     // if our frame isn't a keyframe then we need to load up the previous keyframe's data first...
     if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
-      printf( "ERROR: reading geometry keyframe %i\n", prev_key_idx );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
       return false;
     }
 
@@ -325,7 +446,7 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
     if ( prev_key_idx != frame_idx ) {
       // read the non-keyframe (careful with mem leaks)
       if ( !vol_geom_read_frame( seq_filename, &_geom_info, frame_idx, &intermediate_frame_data ) ) {
-        printf( "ERROR: reading geometry intermediate frame %i\n", frame_idx );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry intermediate frame %i\n", frame_idx );
         return false;
       }
       points_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.vertices_offset];
@@ -357,7 +478,7 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
          (void*)indices_ptr,                          //
          n_indices,                                   //
          indices_type ) ) {
-    fprintf( stderr, "ERROR: failed to write mesh file `%s`\n", output_mesh_filename );
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write mesh file `%s`\n", output_mesh_filename );
     // not /returning/ false yet, but just setting a flag, because we still want to release resources
     success = false;
   } // endif write mesh
@@ -371,54 +492,55 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
  */
 static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames ) {
   { // mesh and video processing
-    if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info ) ) {
-      fprintf( stderr, "ERROR: failed to open geometry files %s %s\n", _input_header_filename, _input_sequence_filename );
+    if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, true ) ) {
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open geometry files header=%s sequence=%s. Check for header and sequenece file mismatches.\n",
+        _input_header_filename, _input_sequence_filename );
       return false;
     }
 
     int n_frames = _geom_info.hdr.frame_count;
     if ( first_frame_idx >= n_frames ) {
-      fprintf( stderr, "ERROR: frame %i is not in range of geometry's %i frames\n", first_frame_idx, n_frames );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Frame %i is not in range of geometry's %i frames\n", first_frame_idx, n_frames );
       return false;
     }
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
 
     for ( int i = first_frame_idx; i <= last_frame_idx; i++ ) {
-      sprintf( _output_mesh_filename, "output_frame_%08i.obj", i );
-      sprintf( _output_mtl_filename, "output_frame_%08i.mtl", i );
+      sprintf( _output_mesh_filename, "%s%08i.obj", _prefix_str, i );
+      sprintf( _output_mtl_filename, "%s%08i.mtl", _prefix_str, i );
       sprintf( _material_name, "vol_mtl_%08i", i );
       switch ( _img_fmt ) {
-      case IMG_FMT_PPM: sprintf( _output_img_filename, "output_frame_%08i.ppm", i ); break;
-      case IMG_FMT_JPG: sprintf( _output_img_filename, "output_frame_%08i.jpg", i ); break;
-      default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
+      case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
+      case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
+      default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
       } // endswitch
 
       // and geometry
       if ( !_write_geom_frame_to_mesh( _input_header_filename, _input_sequence_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i ) ) {
-        fprintf( stderr, "ERROR: failed to write geometry frame %i to file\n", i );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         return false;
       }
       // material file
       if ( !_write_mtl_file( _output_mtl_filename, _material_name, _output_img_filename ) ) {
-        fprintf( stderr, "ERROR: failed to write material file for frame %i\n", i );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write material file for frame %i\n", i );
         return false;
       }
     }
 
     if ( !vol_geom_free_file_info( &_geom_info ) ) {
-      fprintf( stderr, "ERROR: failed to free geometry info\n" );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to free geometry info\n" );
       return false;
     }
   } // endblock mesh processing
 
   { // video processing
     if ( !vol_av_open( _input_video_filename, &_av_info ) ) {
-      fprintf( stderr, "ERROR: failed to open video file %s\n", _input_video_filename );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open video file %s.\n", _input_video_filename );
       return false;
     }
     int n_frames = (int)vol_av_frame_count( &_av_info );
     if ( first_frame_idx >= n_frames ) {
-      fprintf( stderr, "ERROR: frame %i is not in range of video's %i frames\n", first_frame_idx, n_frames );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Frame %i is not in range of video's %i frames\n", first_frame_idx, n_frames );
       return false;
     }
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
@@ -426,26 +548,29 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
     // skip up to first frame to write
     for ( int i = 0; i < first_frame_idx; i++ ) {
       if ( !vol_av_read_next_frame( &_av_info ) ) {
-        fprintf( stderr, "ERROR: reading frames from video sequence.\n" );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
         return false;
       }
     }
     // write any frames in the range we want
     for ( int i = first_frame_idx; i <= last_frame_idx; i++ ) {
       if ( !vol_av_read_next_frame( &_av_info ) ) {
-        fprintf( stderr, "ERROR: reading frames from video sequence.\n" );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
         return false;
       }
       switch ( _img_fmt ) {
-      case IMG_FMT_PPM: sprintf( _output_img_filename, "output_frame_%08i.ppm", i ); break;
-      case IMG_FMT_JPG: sprintf( _output_img_filename, "output_frame_%08i.jpg", i ); break;
-      default: fprintf( stderr, "ERROR: no valid image format selected\n" ); return false;
+      case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
+      case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
+      default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
       } // endswitch
-      if ( !_write_video_frame_to_image( _output_img_filename ) ) { fprintf( stderr, "WARNING: failed to write video frame %i to file\n", first_frame_idx ); }
+      if ( !_write_video_frame_to_image( _output_img_filename ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
+        return false; // make sure we stop the processing at this point rather than carry on.
+      }
     }
 
     if ( !vol_av_close( &_av_info ) ) {
-      fprintf( stderr, "ERROR: failed to close video info\n" );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to close video info\n" );
       return false;
     }
   } // endblock video processing
@@ -469,16 +594,16 @@ static bool _does_dir_exist( const char* dir_path ) {
 static bool _make_dir( const char* dir_path ) {
 #if defined( _WIN32 ) || defined( _WIN64 )
   if ( 0 == _mkdir( dir_path ) ) {
-    printf( "Created directory `%s`\n", dir_path );
+    _printlog( _LOG_TYPE_INFO, "Created directory `%s`\n", dir_path );
     return true;
   }
 #else
   if ( 0 == mkdir( dir_path, S_IRWXU ) ) { // Read-Write-eXecute permissions
-    printf( "Created directory `%s`\n", dir_path );
+    _printlog( _LOG_TYPE_INFO, "Created directory `%s`\n", dir_path );
     return true;
   }
 #endif
-  fprintf( stderr, "ERROR: creating directory `%s`\n", dir_path );
+  _printlog( _LOG_TYPE_ERROR, "ERROR: Creating directory `%s`\n", dir_path );
   return false;
 }
 
@@ -487,15 +612,18 @@ static bool _make_dir( const char* dir_path ) {
 #define VOL_VID_STR_1024 "texture_1024_h264.mp4"
 
 int main( int argc, char** argv ) {
+  // Paths for drag-and-drop directory.
+  char dad_hdr_str[MAX_FILENAME_LEN], dad_seq_str[MAX_FILENAME_LEN], dad_vid_str[MAX_FILENAME_LEN], test_vid_str[MAX_FILENAME_LEN];
   int first_frame = 0;
   int last_frame  = 0;
   bool all_frames = false;
 
-  // paths for drag-and-drop directory
-  char dad_hdr_str[MAX_FILENAME_LEN], dad_seq_str[MAX_FILENAME_LEN], dad_vid_str[MAX_FILENAME_LEN], test_vid_str[MAX_FILENAME_LEN];
+  my_argc        = argc;
+  my_argv        = argv;
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
+  strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
 
-  // check for drag-and-drop directory
+  // Check for drag-and-drop directory.
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
     int len = strlen( argv[1] );
     strncat( dad_hdr_str, argv[1], MAX_FILENAME_LEN - 1 );
@@ -522,105 +650,82 @@ int main( int argc, char** argv ) {
     _input_sequence_filename = dad_seq_str;
     _input_video_filename    = dad_vid_str;
   } else {
-    // regular command line parameters
-
-    my_argc = argc;
-    my_argv = argv;
-    if ( _check_param( "--all" ) ) { all_frames = true; }
-    int f_idx          = _check_param( "-f" );
-    int h_idx          = _check_param( "-h" );
-    int l_idx          = _check_param( "-l" );
-    int output_dir_idx = _check_param( "--output_dir" );
-    int s_idx          = _check_param( "-s" );
-    int v_idx          = _check_param( "-v" );
-    if ( f_idx ) {
-      if ( f_idx >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -f parameter must be followed by a frame number.\n" );
+    // Check for command line parameters.
+    if ( !_evaluate_params() ) { return 1; }
+    { // Register any user-set options.
+      if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
+        printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
+        _print_cl_flags();
+        return 0;
+      }
+      all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
+      if ( _option_arg_indices[CL_HEADER] ) {
+        _input_header_filename = my_argv[_option_arg_indices[CL_HEADER] + 1];
+      } else {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --header is missing. Run with --help for details.\n" );
         return 1;
       }
-      first_frame = atoi( argv[f_idx + 1] );
-      last_frame  = last_frame < first_frame ? first_frame : last_frame;
-    }
-    if ( h_idx ) {
-      if ( h_idx >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -h parameter must be followed by a file path.\n" );
+      if ( _option_arg_indices[CL_FIRST] ) {
+        first_frame = atoi( my_argv[_option_arg_indices[CL_FIRST] + 1] );
+        last_frame  = last_frame < first_frame ? first_frame : last_frame;
+      }
+      if ( _option_arg_indices[CL_LAST] ) {
+        last_frame  = atoi( my_argv[_option_arg_indices[CL_LAST] + 1] );
+        first_frame = first_frame >= last_frame ? last_frame : first_frame;
+      }
+      if ( _option_arg_indices[CL_OUTPUT_DIR] ) {
+        _output_dir_path[0] = '\0';
+        int plen            = (int)strlen( my_argv[_option_arg_indices[CL_OUTPUT_DIR] + 1] );
+        int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+        strncat( _output_dir_path, my_argv[_option_arg_indices[CL_OUTPUT_DIR] + 1], l );
+        // remove any existing path slashes and put a *nix slash at the end
+        if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
+        if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
+        strncat( _output_dir_path, "/", MAX_FILENAME_LEN - 1 );
+        // If path doesn't exist try making that folder.
+        if ( !_does_dir_exist( _output_dir_path ) ) {
+          if ( !_make_dir( _output_dir_path ) ) {
+            _output_dir_path[0] = '\0';
+            return 1;
+          }
+        }
+        _printlog( _LOG_TYPE_INFO, "Using output directory = `%s`\n", _output_dir_path );
+      }
+      if ( _option_arg_indices[CL_PREFIX] ) {
+        _prefix_str[0] = '\0';
+        int plen       = (int)strlen( my_argv[_option_arg_indices[CL_PREFIX] + 1] );
+        int l          = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
+        strncat( _prefix_str, my_argv[_option_arg_indices[CL_PREFIX] + 1], l );
+        _printlog( _LOG_TYPE_INFO, "Using output prefix = `%s`\n", _prefix_str );
+        // NOTE(Anton) - Could parse here to exclude invalid chars but we have to know something about the encoding; it could be UTF-8 or UTF-16.
+      }
+      if ( _option_arg_indices[CL_SEQUENCE] ) {
+        _input_sequence_filename = my_argv[_option_arg_indices[CL_SEQUENCE] + 1];
+      } else {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --sequence is missing. Run with --help for details.\n" );
         return 1;
       }
-      _input_header_filename = argv[h_idx + 1];
-    }
-    if ( l_idx ) {
-      if ( l_idx >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -l parameter must be followed by a frame number.\n" );
+      if ( _option_arg_indices[CL_VIDEO] ) {
+        _input_video_filename = argv[_option_arg_indices[CL_VIDEO] + 1];
+      } else {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --video is missing. Run with --help for details.\n" );
         return 1;
       }
-      last_frame  = atoi( argv[l_idx + 1] );
-      first_frame = first_frame >= last_frame ? last_frame : first_frame;
-    }
-    if ( output_dir_idx ) {
-      if ( output_dir_idx >= argc - 1 ) {
-        fprintf( stderr, "ERROR: --output_dir parameter must be followed by a file path.\n" );
-        return 1;
-      }
-      _output_dir_path[0] = '\0';
-      int plen            = (int)strlen( argv[output_dir_idx + 1] );
-      int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
-      strncat( _output_dir_path, argv[output_dir_idx + 1], l );
-
-      // remove any existing path slashes and put a *nix slash at the end
-      if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
-      if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
-      strncat( _output_dir_path, "/", MAX_FILENAME_LEN - 1 );
-
-      // if path doesn't exist try making that folder.
-      if ( !_does_dir_exist( _output_dir_path ) ) {
-        if ( !_make_dir( _output_dir_path ) ) { _output_dir_path[0] = '\0'; }
-      }
-      printf( "Using output directory = `%s`\n", _output_dir_path );
-    }
-    if ( s_idx ) {
-      if ( s_idx >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -s parameter must be followed by a file path.\n" );
-        return 1;
-      }
-      _input_sequence_filename = argv[s_idx + 1];
-    }
-    if ( v_idx ) {
-      if ( v_idx >= argc - 1 ) {
-        fprintf( stderr, "ERROR: -v parameter must be followed by a file path.\n" );
-        return 1;
-      }
-      _input_video_filename = argv[v_idx + 1];
-    }
-    if ( _check_param( "--help" ) || !h_idx || !s_idx || !v_idx ) {
-      printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
-      printf( "Options:\n" );
-      printf( "  --all             Process all frames in vologram.\n" );
-      printf( "                    If given then paramters -f and -l are ignored.\n" );
-      printf( "  -f N              Process the frame number given by N (frames start at 0). Default value 0.\n" );
-      printf( "                    If the -l parameter is not given then only this single frame is processed.\n" );
-      printf( "  -l N              Process up to specific frame number given by N.\n" );
-      printf( "                    Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.\n" );
-      printf( "  --output_dir      Specify a directory to write output files to. The default is the current working directory.\n" );
-      printf( "  --help            This text.\n" );
-
-      return 0;
-    }
+    } // endblock register user-set options.
   }
 
   if ( all_frames ) {
     first_frame = last_frame = 0;
-    printf( "Converting\n  frames\t\t all\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t`%s`\n", _input_header_filename, _input_sequence_filename,
-      _input_video_filename );
-  } else {
-    printf( "Converting\n  frames\t\t %i-%i\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t`%s`\n", first_frame, last_frame, _input_header_filename,
+    _printlog( _LOG_TYPE_INFO, "Converting\n  frames\t\t all\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t\t`%s`\n", _input_header_filename,
       _input_sequence_filename, _input_video_filename );
+  } else {
+    _printlog( _LOG_TYPE_INFO, "Converting\n  frames\t\t %i-%i\n  header\t\t`%s`\n  sequence\t\t`%s`\n  video texture\t\t`%s`\n", first_frame, last_frame,
+      _input_header_filename, _input_sequence_filename, _input_video_filename );
   }
 
-  if ( !_process_vologram( first_frame, last_frame, all_frames ) ) {
-    fprintf( stderr, "ERROR: failed to process vologram\n" );
-    return 1;
-  }
-  printf( "Vologram processing completed.\n" );
+  if ( !_process_vologram( first_frame, last_frame, all_frames ) ) { return 1; }
+
+  _printlog( _LOG_TYPE_SUCCESS, "Vologram processing completed.\n" );
 
   return 0;
 }

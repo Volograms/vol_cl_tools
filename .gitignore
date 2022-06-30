@@ -61,3 +61,8 @@ output_frame_*
 *.dll
 vol_cl_tools_*
 build/
+
+*.jpg
+*.mtl
+*.webp
+*.png

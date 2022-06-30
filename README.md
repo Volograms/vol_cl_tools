@@ -70,7 +70,7 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 
 | Tool    | Version | Description                                                                                   |
 |---------|---------|-----------------------------------------------------------------------------------------------|
-| vol2obj | 0.6.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
+| vol2obj | 0.7.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
 | cutvols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
 
 Further tools to be added: obj2vol, sequence cutting and manipulation. 
@@ -144,14 +144,38 @@ If we run the vol2obj program from a terminal, without arguments, it will tell u
 $  ./vol2obj.bin 
 Usage ./vol2obj.bin [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4
 Options:
-  --all             Process all frames in vologram.
-                    If given then paramters -f and -l are ignored.
-  -f N              Process the frame number given by N (frames start at 0). Default value 0.
-                    If the -l parameter is not given then only this single frame is processed.
-  -l N              Process up to specific frame number given by N.
-                    Can be used in conjunction with -f to process a range of frames from -f to -l (first to last), inclusive.
-  --output_dir      Specify a directory to write output files to. The default is the current working directory.
-  --help            This text.
+--all, -a
+Create output files for, and process, all frames found in the sequence.
+If given then paramters -f and -l are ignored.
+
+--header, -h
+Required. The next argument gives the path to the header.vols file.
+
+--help
+Prints this text.
+
+--first, -f
+The next argument gives the frame number of the first frame to process (frames start at 0).
+If the -l parameter is not given then only this single frame is processed.
+Default value 0.
+
+--last, -l
+The next argument gives the frame number of the last frame to process.
+Can be used with -f to process a range of frames from first to last, inclusive.
+
+--output_dir, -o
+The next argument gives the path to a directory to write output files into.
+Default is the current working directory.
+
+--prefix, -p
+The next argument gives the prefix to use for output filenames.
+Default is output_frame_.
+
+--sequence, -s
+Required. The next argument gives the path to the sequence_0.vols file.
+
+--video, -v
+Required. The next argument gives the path to the video texture file.
 ```
 
 ### Examples
