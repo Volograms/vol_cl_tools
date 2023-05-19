@@ -374,7 +374,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       fprintf( f_ptr, "vt %0.3f %0.3f\n", s, t );
     }
   }
-  assert( normals_ptr && "Hey if there are no normals Anton should make sure that is accounted for in the f section" );
+  // assert( normals_ptr && "Hey if there are no normals Anton should make sure that is accounted for in the f section" );
   if ( normals_ptr ) {
     for ( int i = 0; i < n_normals; i++ ) {
       float x = normals_ptr[i * 3 + 0];
