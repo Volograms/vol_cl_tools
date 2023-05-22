@@ -110,7 +110,7 @@ make
 ```
 
 * To build cutvols tool (*nix only):
-    * Install dependencies CMake, FFmpeg, and Boost libraries. e.g. on Debian or Ubuntu: `sudo apt-get update && apt-get install --no-install-recommends cmake ffmpeg libboost-all-dev`.
+    * Install dependencies CMake, FFmpeg, and Boost libraries. e.g. on Debian or Ubuntu: `sudo apt-get update && sudo apt-get install --no-install-recommends cmake ffmpeg libboost-all-dev`.
     * Invoke CMake then compile:
 
 ```
