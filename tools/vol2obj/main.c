@@ -400,7 +400,11 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       int b = (int)( i_u16_ptr[i * 3 + 1] ) + 1;
       int c = (int)( i_u16_ptr[i * 3 + 2] ) + 1;
       // NOTE(Anton) VOLS winding order is CW (similar to Unity) rather than typical CCW so let's reverse it for OBJ
-      fprintf( f_ptr, "f %i/%i/%i %i/%i/%i %i/%i/%i\n", c, c, c, b, b, b, a, a, a );
+      if ( normals_ptr ) {
+        fprintf( f_ptr, "f %i/%i/%i %i/%i/%i %i/%i/%i\n", c, c, c, b, b, b, a, a, a ); // f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3 ...
+      } else {
+        fprintf( f_ptr, "f %i/%i %i/%i %i/%i\n", c, c, b, b, a, a );                   // f v1/vt1 v2/vt2 v3/vt3 ...
+      }
     }
   }
 
