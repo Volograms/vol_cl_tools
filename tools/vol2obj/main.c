@@ -3,9 +3,9 @@
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
  * --------- | ----------
- * Version   | 0.7.0
+ * Version   | 0.8.0
  * Authors   | Anton Gerdelan <anton@volograms.com>
- * Copyright | 2021, Volograms (http://volograms.com/)
+ * Copyright | 2023-2021, Volograms (http://volograms.com/)
  * Language  | C99
  * Files     | 1
  * Licence   | The MIT License. See LICENSE.md for details.
@@ -31,13 +31,10 @@
  *
  * `make vol2obj`
  *
- * or e.g.
- * `gcc -o vol2obj.bin tools/vol2obj/main.c -I lib/ -I thirdparty/ lib/vol_geom.c lib/vol_av.c -L ./ -lavcodec -lavdevice -lavformat -lavutil -lswscale -lm`
  * TODOs
  * -----------
  *
  * FEATURES
- * - no-normals volograms (older ones) support
  * - flags to request PNG or JPEG or DDS using eg stb_image_write
  * - other file writing libraries
  * - add support for non-u16 indices
@@ -49,7 +46,9 @@
  *
  * History
  * -----------
- * - 0.7.0   (2022/07/29) - --prefix flag, and updated vol_libs, updated cl param parsing system.
+ * - 0.8.0   (2023/06/20) - `--combined` flag. vols v1.3 support with Basis Universal textures.
+ * - 0.7.1   (2023/06/20) - Support for Volograms without normals.
+ * - 0.7.0   (2022/07/29) - `--prefix` flag, and updated vol_libs, updated cl param parsing system.
  * - 0.6.0   (2022/06/17) - Fix for drag-and-drop not finding the new 1k video texture files.
  * - 0.5.0   (2022/04/22) - Includes drag-and-drop of vologram folders for Windows.
  * - 0.4.3   (2022/02/09) - Small tweak .obj format to enable texture display in Windows 3d viewer.
