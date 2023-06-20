@@ -119,7 +119,7 @@ typedef enum img_fmt_t {
 typedef struct cl_flag_t {
   const char* long_str;  // e.g. "--header"
   const char* short_str; // e.g. "-h"
-  const char* help_str;  // e.g. "Required. The next argument gives the path to the header.vols file.\n"
+  const char* help_str;  // e.g. "Required for multi-file volograms. The next argument gives the path to the header.vols file.\n"
   int n_required_args;   // Number of parameters following that are required.
 } cl_flag_t;
 
@@ -128,35 +128,45 @@ static int my_argc;
 static char** my_argv;
 
 /** Convience enum to index into the array of command-line flags by readable name. */
-typedef enum cl_flag_enum_t { CL_ALL_FRAMES, CL_HEADER, CL_HELP, CL_FIRST, CL_LAST, CL_OUTPUT_DIR, CL_PREFIX, CL_SEQUENCE, CL_VIDEO, CL_MAX } cl_flag_enum_t;
+typedef enum cl_flag_enum_t {
+  CL_ALL_FRAMES,
+  CL_COMBINED,
+  CL_HEADER,
+  CL_HELP,
+  CL_FIRST,
+  CL_LAST,
+  CL_OUTPUT_DIR,
+  CL_PREFIX,
+  CL_SEQUENCE,
+  CL_VIDEO,
+  CL_MAX
+} cl_flag_enum_t;
 
 /** All command line flags are specified here. Note that this order must correspond to the ordering in cl_flag_enum_t. */
 static cl_flag_t _cl_flags[CL_MAX] = {
-  { "--all", "-a",                                                                                        // CL_ALL_FRAMES
-    "Create output files for, and process, all frames found in the sequence.\n"                           //
-    "If given then paramters -f and -l are ignored.\n",                                                   //
-    0 },                                                                                                  //
-  { "--header", "-h", "Required. The next argument gives the path to the header.vols file.\n", 1 },       // CL_HEADER
-  { "--help", NULL, "Prints this text.\n", 0 },                                                           // CL_HELP
-  { "--first", "-f",                                                                                      // CL_FIRST
-    "The next argument gives the frame number of the first frame to process (frames start at 0).\n"       //
-    "If the -l parameter is not given then only this single frame is processed.\n"                        //
-    "Default value 0.\n",                                                                                 //
-    1 },                                                                                                  //
-  { "--last", "-l",                                                                                       // CL_LAST
-    "The next argument gives the frame number of the last frame to process.\n"                            //
-    "Can be used with -f to process a range of frames from first to last, inclusive.\n",                  //
-    1 },                                                                                                  //
-  { "--output-dir", "-o",                                                                                 // CL_OUTPUT_DIR
-    "The next argument gives the path to a directory to write output files into.\n"                       //
-    "Default is the current working directory.\n",                                                        //
-    1 },                                                                                                  //
-  { "--prefix", "-p",                                                                                     // CL_PREFIX
-    "The next argument gives the prefix to use for output filenames.\n"                                   //
-    "Default is output_frame_.\n",                                                                        //
-    1 },                                                                                                  //
-  { "--sequence", "-s", "Required. The next argument gives the path to the sequence_0.vols file.\n", 1 }, // CL_SEQUENCE
-  { "--video", "-v", "Required. The next argument gives the path to the video texture file.\n", 1 }       // CL_VIDEO
+  { "--all", "-a", "Create output files for, and process, all frames found in the sequence.\nIf given, then paramters -f and -l are ignored.\n", 0 }, // CL_ALL_FRAMES
+  { "--combined", "-c", "Required for single-file volograms. The next argument gives the path to your myfile.vols.\n", 1 },        // CL_COMBINED
+  { "--header", "-h", "Required for multi-file volograms. The next argument gives the path to the header.vols file.\n", 1 },       // CL_HEADER
+  { "--help", NULL, "Prints this text.\n", 0 },                                                                                    // CL_HELP
+  { "--first", "-f",                                                                                                               // CL_FIRST
+    "The next argument gives the frame number of the first frame to process (frames start at 0).\n"                                //
+    "If the -l parameter is not given then only this single frame is processed.\n"                                                 //
+    "Default value 0.\n",                                                                                                          //
+    1 },                                                                                                                           //
+  { "--last", "-l",                                                                                                                // CL_LAST
+    "The next argument gives the frame number of the last frame to process.\n"                                                     //
+    "Can be used with -f to process a range of frames from first to last, inclusive.\n",                                           //
+    1 },                                                                                                                           //
+  { "--output-dir", "-o",                                                                                                          // CL_OUTPUT_DIR
+    "The next argument gives the path to a directory to write output files into.\n"                                                //
+    "Default is the current working directory.\n",                                                                                 //
+    1 },                                                                                                                           //
+  { "--prefix", "-p",                                                                                                              // CL_PREFIX
+    "The next argument gives the prefix to use for output filenames.\n"                                                            //
+    "Default is output_frame_.\n",                                                                                                 //
+    1 },                                                                                                                           //
+  { "--sequence", "-s", "Required for multi-file volograms. The next argument gives the path to the sequence_0.vols file.\n", 1 }, // CL_SEQUENCE
+  { "--video", "-v", "Required for multi-file volograms. The next argument gives the path to the video texture file.\n", 1 }       // CL_VIDEO
 };
 
 /** Used to print all the options in the command line flags struct for the help text. */
@@ -375,21 +385,20 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   }
   assert( indices_ptr && "Hey if there are no indices Anton should make sure that is accounted for in the f section" );
   if ( indices_ptr ) {
-    // TODO(Anton) when adding support for additional indices types these may be required:
+    // NOTE: If adding support for additional index types these may be required:
     // uint32_t* i_u32_ptr = (uint32_t*)indices_ptr;
     // uint8_t* i_u8_ptr   = (uint8_t*)indices_ptr;
     uint16_t* i_u16_ptr = (uint16_t*)indices_ptr;
     // OBJ spec:
-    // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts
-    // at 1"
+    // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts at 1"
     for ( int i = 0; i < n_indices / 3; i++ ) {
-      // index types: 0=unsigned byte, 1=unsigned short, 2=unsigned int.
-      /* Integer[] if # vertices >= 65535 (Unity Version < 2017.3 does not support Integer indices) Short[] if # vertices < 65535 */
-      assert( index_type == 1 );                 // NOTE(Anton) can come back and support others later
-      int a = (int)( i_u16_ptr[i * 3 + 0] ) + 1; // note +1s here!
+      // Index types: { 0=unsigned byte, 1=unsigned short, 2=unsigned int }.
+      /* Integer[] if # vertices >= 65535 (Unity Version < 2017.3 does not support Integer indices) Short[] if # vertices < 65535. */
+      assert( index_type == 1 );                 // Can come back and support other index types later.
+      int a = (int)( i_u16_ptr[i * 3 + 0] ) + 1; // Note: +1s here!
       int b = (int)( i_u16_ptr[i * 3 + 1] ) + 1;
       int c = (int)( i_u16_ptr[i * 3 + 2] ) + 1;
-      // NOTE(Anton) VOLS winding order is CW (similar to Unity) rather than typical CCW so let's reverse it for OBJ
+      // NOTE VOLS winding order is CW (similar to Unity) rather than typical CCW so let's reverse it for OBJ.
       if ( normals_ptr ) {
         fprintf( f_ptr, "f %i/%i/%i %i/%i/%i %i/%i/%i\n", c, c, c, b, b, b, a, a, a ); // f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3 ...
       } else {
@@ -405,11 +414,17 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
 }
 
 /**
- * @param output_mtl_filename If NULL then no MTL section or link is added to the Obj.
+ * @param output_mtl_filename
+ * If NULL then no MTL section or link is added to the Obj.
+ * @param use_vol_av
+ * If true then output_image_filename must not be NULL.
+ * @return
+ * Returns false on error.
  */
 static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq_filename, const char* output_mesh_filename, const char* output_mtl_filename,
-  const char* material_name, int frame_idx ) {
+  const char* material_name, int frame_idx, bool use_vol_av, const char* output_image_filename ) {
   if ( !hdr_filename || !seq_filename || !output_mesh_filename || frame_idx < 0 ) { return false; }
+  if ( use_vol_av && !output_image_filename ) { return false; }
 
   vol_geom_frame_data_t keyframe_data           = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
   vol_geom_frame_data_t intermediate_frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
@@ -420,8 +435,8 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
   uint8_t *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL, *indices_ptr = NULL;
   int32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0;
 
-  { // get data pointers
-    // if our frame isn't a keyframe then we need to load up the previous keyframe's data first...
+  { // Get data pointers.
+    // If our frame isn't a keyframe then we need to load up the previous keyframe's data first...
     if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
       return false;
@@ -436,9 +451,9 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
     normals_sz   = keyframe_data.normals_sz;
     indices_sz   = keyframe_data.indices_sz;
 
-    // ...and then add our frame's subset of the data second
+    // ...and then add our frame's subset of the data second.
     if ( prev_key_idx != frame_idx ) {
-      // read the non-keyframe (careful with mem leaks)
+      // Read the non-keyframe (careful with mem leaks).
       if ( !vol_geom_read_frame( seq_filename, &_geom_info, frame_idx, &intermediate_frame_data ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry intermediate frame %i\n", frame_idx );
         return false;
@@ -450,14 +465,14 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
         normals_sz  = intermediate_frame_data.normals_sz;
       }
     }
-  } // endblock get data pointers
+  } // endblock get data pointers.
 
-  // write the .obj
+  // Write the .obj.
   int n_points    = points_sz / ( sizeof( float ) * 3 );
   int n_texcoords = texcoords_sz / ( sizeof( float ) * 2 );
   int n_normals   = normals_sz / ( sizeof( float ) * 3 );
-  // NOTE(Anton) hacked this in so only supporting uint32_t indices for first pass
-  int indices_type = 1;                               // 1 is uint16_t
+  // NOTE(Anton) hacked this in so only supporting uint32_t indices for first pass.
+  int indices_type = 1;                               // 1 is uint16_t.
   int n_indices    = indices_sz / sizeof( uint16_t ); // NOTE(Anton) change if type changes!!!
   if ( !_write_mesh_to_obj_file(                      //
          output_mesh_filename,                        //
@@ -473,23 +488,41 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
          n_indices,                                   //
          indices_type ) ) {
     _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write mesh file `%s`\n", output_mesh_filename );
-    // not /returning/ false yet, but just setting a flag, because we still want to release resources
+    // Not returning false yet, but just setting a flag, because we still want to release resources.
     success = false;
-  } // endif write mesh
+  } // endif write mesh.
+
+  // And texture.
+  if ( !use_vol_av ) {
+    // TODO(Anton) vol_basis_transcode();
+    // Write image file.
+  }
 
   return success;
 }
 
-/** Write frames between `first_frame_idx` and `last_frame_idx`, or all of them, if `all_frames` is set,
+/** Write frames between `first_frame_idx` and `last_frame_idx`,
+ * or all of them, if `all_frames` is set,
  * to mesh, material, and image files.
- * @return Returns false on error.
+ *
+ * @return
+ * Returns false on error.
  */
 static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames ) {
+  bool use_vol_av = false;
   { // mesh and video processing
     if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, true ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open geometry files header=%s sequence=%s. Check for header and sequenece file mismatches.\n",
         _input_header_filename, _input_sequence_filename );
       return false;
+    }
+    if ( _geom_info.hdr.version < 13 ) {
+      use_vol_av = true;
+    } else {
+      if ( !vol_basis_init() ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to initialise Basis transcoder.\n" );
+        return false;
+      }
     }
 
     int n_frames = _geom_info.hdr.frame_count;
@@ -507,67 +540,74 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
       case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
-      } // endswitch
+      } // endswitch.
 
-      // and geometry
-      if ( !_write_geom_frame_to_mesh( _input_header_filename, _input_sequence_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i ) ) {
+      // And geometry.
+      if ( !_write_geom_frame_to_mesh( _input_header_filename, _input_sequence_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i,
+             use_vol_av, _output_img_filename ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         return false;
       }
-      // material file
+      // Material file.
       if ( !_write_mtl_file( _output_mtl_filename, _material_name, _output_img_filename ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write material file for frame %i\n", i );
         return false;
       }
-    }
+    } // endfor frames.
 
     if ( !vol_geom_free_file_info( &_geom_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to free geometry info\n" );
       return false;
     }
-  } // endblock mesh processing
+  }                   // endblock mesh processing.
 
-  { // video processing
+  if ( use_vol_av ) { // Video Processing.
     if ( !vol_av_open( _input_video_filename, &_av_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open video file %s.\n", _input_video_filename );
       return false;
     }
     int n_frames = (int)vol_av_frame_count( &_av_info );
+
     if ( first_frame_idx >= n_frames ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Frame %i is not in range of video's %i frames\n", first_frame_idx, n_frames );
       return false;
     }
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
 
-    // skip up to first frame to write
+    // Skip up to first frame to write.
     for ( int i = 0; i < first_frame_idx; i++ ) {
       if ( !vol_av_read_next_frame( &_av_info ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
         return false;
       }
     }
-    // write any frames in the range we want
+
+    // Write any frames in the range we want.
     for ( int i = first_frame_idx; i <= last_frame_idx; i++ ) {
-      if ( !vol_av_read_next_frame( &_av_info ) ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
-        return false;
+      if ( use_vol_av ) {
+        if ( !vol_av_read_next_frame( &_av_info ) ) {
+          _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
+          return false;
+        }
       }
+
       switch ( _img_fmt ) {
       case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
       case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
-      } // endswitch
+      } // endswitch.
       if ( !_write_video_frame_to_image( _output_img_filename ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
-        return false; // make sure we stop the processing at this point rather than carry on.
+        return false; // Make sure we stop the processing at this point rather than carry on.
       }
-    }
+    }                 // endfor.
 
     if ( !vol_av_close( &_av_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to close video info\n" );
       return false;
     }
-  } // endblock video processing
+  } // endblock Video Processing.
+
   return true;
 }
 
@@ -648,14 +688,25 @@ int main( int argc, char** argv ) {
     if ( !_evaluate_params() ) { return 1; }
     { // Register any user-set options.
       if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
-        printf( "Usage %s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n", argv[0] );
+        printf(
+          "Usage for single-file volograms:\n"
+          "%s [OPTIONS] -c MYFILE.VOLS\n\n"
+          "Usage for multi-file volograms:\n"
+          "%s [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4\n\n",
+          argv[0], argv[0] );
         _print_cl_flags();
         return 0;
       }
       all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
+      if ( _option_arg_indices[CL_COMBINED] ) {
+        // TODO(Anton).
+      } else if ( !_option_arg_indices[CL_HEADER] && !_option_arg_indices[CL_SEQUENCE] ) {
+        _printlog( _LOG_TYPE_WARNING, "Required argument --combined is missing. Run with --help for details.\n" );
+        return 1;
+      }
       if ( _option_arg_indices[CL_HEADER] ) {
         _input_header_filename = my_argv[_option_arg_indices[CL_HEADER] + 1];
-      } else {
+      } else if ( !_option_arg_indices[CL_COMBINED] ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --header is missing. Run with --help for details.\n" );
         return 1;
       }
@@ -695,13 +746,13 @@ int main( int argc, char** argv ) {
       }
       if ( _option_arg_indices[CL_SEQUENCE] ) {
         _input_sequence_filename = my_argv[_option_arg_indices[CL_SEQUENCE] + 1];
-      } else {
+      } else if ( !_option_arg_indices[CL_COMBINED] ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --sequence is missing. Run with --help for details.\n" );
         return 1;
       }
       if ( _option_arg_indices[CL_VIDEO] ) {
         _input_video_filename = argv[_option_arg_indices[CL_VIDEO] + 1];
-      } else {
+      } else if ( !_option_arg_indices[CL_COMBINED] ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --video is missing. Run with --help for details.\n" );
         return 1;
       }
