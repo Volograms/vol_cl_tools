@@ -69,7 +69,7 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 ## Repository Contents ##
 
 | Tool    | Version | Description                                                                                   |
-|---------|---------|-----------------------------------------------------------------------------------------------|
+| ------- | ------- | --------------------------------------------------------------------------------------------- |
 | vol2obj | 0.7.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
 | cutvols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
 
@@ -227,6 +227,20 @@ Copyright 2021, Volograms.
 The MIT License. See the `LICENSE` file for details.
 
 ### Dependencies
+
+* This software uses the unaltered transcoder from [Basis Universal](https://binomialllc.github.io/basis_universal/) by [Binomial](http://www.binomial.info/). The transcoder, in turn, uses some code under zlib and BSD (Zstandard). The supported texture formats are [open Khronos Group standards](https://www.khronos.org/registry/DataFormat/specs/1.1/dataformat.1.1.html).
+
+>    Licensed under the Apache License, Version 2.0 (the "License");
+>    you may not use this file except in compliance with the License.
+>    You may obtain a copy of the License at
+> 
+>        http://www.apache.org/licenses/LICENSE-2.0
+> 
+>    Unless required by applicable law or agreed to in writing, software
+>    distributed under the License is distributed on an "AS IS" BASIS,
+>    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+>    See the License for the specific language governing permissions and
+>    limitations under the License.
 
 * This software uses unaltered code of <a href=http://ffmpeg.org>FFmpeg</a> licensed under the <a href=http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>LGPLv2.1</a> and its source code can be found at [github.com/FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg).
 
