@@ -2,47 +2,34 @@
  * Volograms VOLS to Wavefront OBJ converter.
  *
  * vol2obj   | Vologram frame to OBJ+image converter.
- * --------- | ----------
+ * --------- | ----------------------------------------------------------------
  * Version   | 0.8.0
- * Authors   | Anton Gerdelan <anton@volograms.com>
+ * Authors   | Anton Gerdelan  <anton@volograms.com>
+ *           | Jan Ondřej      <jan@volograms.com>
  * Copyright | 2023-2021, Volograms (http://volograms.com/)
- * Language  | C99
+ * Language  | C99, C++11
  * Files     | 1
- * Licence   | The MIT License. See LICENSE.md for details.
- * Notes     | Internally this uses FFMPEG to stream audio/video from a webm file or other media.
- *
- * Current Limitations
- * -----------
- * * Only Volograms with normals are currently supported (this means older vologram captures won't convert yet).
- * * Only Volograms with 16-bit indices are currently supported (the most common variant).
+ * Licence   | The MIT License. Note that dependencies have separate licences.
+ *           | See LICENSE.md for details.
  *
  * Usage Instructions
- * -----------
- * Usage:
+ * ------------------
+ * For single-file volograms:
+ *     ./vol2obj.bin -c MYFILE.VOLS -f FRAME_NUMBER
  *
- *`./vol2obj.bin -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4 -f FRAME_NUMBER`
+ * For older multi-file volograms:
+ *     ./vol2obj.bin -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4 -f FRAME_NUMBER
  *
- * Where `FRAME_NUMBER` is a frame you'd like to extract from the sequence, with 0 being the first frame.
- * If you request a frame outside range an error will be reported.
- * You can also output every frame with the `--all` option, or a specific range of frames using `-f FIRST -l LAST`,
- * for frame numbers `FIRST` to `LAST`, inclusive.
+ *   - Where `FRAME_NUMBER` is a frame you'd like to extract from the sequence, with 0 being the first frame.
+ *   - If you request a frame outside range an error will be reported.
+ *   - You can also output every frame with the `--all` option, or a specific range of frames using
+ *     `-f FIRST -l LAST`
+ *     for frame numbers `FIRST` to `LAST`, inclusive.
  *
- * Compilation:
+ * Compilation
+ * ------------------
  *
  * `make vol2obj`
- *
- * TODOs
- * -----------
- *
- * FEATURES
- * - flags to request PNG or JPEG or DDS using eg stb_image_write
- * - other file writing libraries
- * - add support for non-u16 indices
- *
- * TESTING
- * - fuzzing
- * - test a mesh that doesnt have normals
- * - and a mesh with 32-bit indices
  *
  * History
  * -----------
@@ -60,10 +47,13 @@
  * - 0.1.0   (2021/11/12) - First version with number and repo.
  */
 
-#include "vol_av.h"   // Volograms' vol_av texture video library.
-#include "vol_geom.h" // Volograms' vol_geom .vols file parsing library.
+#include "vol_av.h"    // Volograms' texture video library.
+#include "vol_basis.h" // Volograms' Basis Universal wrapper library.
+#include "vol_geom.h"  // Volograms' .vols file parsing library.
+
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb/stb_image_write.h"
+
 #include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -71,13 +61,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #ifdef _MSC_VER
-// not #if defined(_WIN32) || defined(_WIN64) because we have strncasecmp in mingw
+// Not "#if defined(_WIN32) || defined(_WIN64)" because we have strncasecmp in MinGW.
 #define strncasecmp _strnicmp
 #define strcasecmp _stricmp
 #else
 #include <strings.h> // strcasecmp
-#endif
+#endif               /* endif _MSC_VER. */
+
 #if defined( _WIN32 ) || defined( _WIN64 )
 #include <direct.h>
 #include <windows.h>
@@ -85,9 +77,10 @@
 #include <dirent.h>   // DIR
 #include <sys/stat.h> // mkdir
 #include <errno.h>
-#endif
+#endif                /* endif _WIN32 || _WIN64. */
 
-#define MAX_FILENAME_LEN 4096 // Maximum file path length
+#define MAX_FILENAME_LEN 4096
+#define MAX_SUBPATH_LEN 1024
 
 /** Colour formatting of printfs for status messages. */
 static const char* STRC_DEFAULT = "\x1B[0m";
@@ -115,9 +108,7 @@ static void _printlog( _log_type log_type, const char* message_str, ... ) {
   fprintf( stream_ptr, "%s", STRC_DEFAULT );
 }
 
-/** Different output image format options.
-NOTE(Anton) We could add DDS/ktx/basis here.
-*/
+// TODO(Anton) add Basis & KTX.
 typedef enum img_fmt_t {
   IMG_FMT_PPM = 0, // homemade
   IMG_FMT_JPG,     // uses library
@@ -235,12 +226,12 @@ static vol_geom_info_t _geom_info;                   // Mesh information from vo
 static char* _input_header_filename;                 // e.g. `header.vols`
 static char* _input_sequence_filename;               // e.g. `sequence.vols`
 static char* _input_video_filename;                  // e.g. `texture_1024.webm`
-static char _output_dir_path[MAX_FILENAME_LEN];      // e.g. `my_output/`
+static char _output_dir_path[MAX_SUBPATH_LEN];       // e.g. `my_output/`
 static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000000.obj`
 static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
 static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
-static char _material_name[MAX_FILENAME_LEN];        // e.g. `volograms_mtl_00000000`
-static char _prefix_str[MAX_FILENAME_LEN];           // defaults to `output_frame_`
+static char _material_name[MAX_SUBPATH_LEN];         // e.g. `volograms_mtl_00000000`
+static char _prefix_str[MAX_SUBPATH_LEN];            // defaults to `output_frame_`
 
 /// A homemade P3 ASCII PPM image writer. These images are very large, so only useful for debugging purposes.
 static bool write_rgb_image_to_ppm( const char* filename, uint8_t* image_ptr, int w, int h ) {
@@ -684,7 +675,7 @@ int main( int argc, char** argv ) {
         // remove any existing path slashes and put a *nix slash at the end
         if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
         if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
-        strncat( _output_dir_path, "/", MAX_FILENAME_LEN - 1 );
+        strncat( _output_dir_path, "/", MAX_SUBPATH_LEN - 1 );
         // If path doesn't exist try making that folder.
         if ( !_does_dir_exist( _output_dir_path ) ) {
           if ( !_make_dir( _output_dir_path ) ) {
