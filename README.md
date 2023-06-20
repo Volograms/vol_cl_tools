@@ -76,7 +76,7 @@ You should be able to import or drag-and-drop this into most 3D software and 3D 
 Further tools to be added: obj2vol, sequence cutting and manipulation. 
 
 ```
-lib/                 -- Core vologram processing libraries, vol_av (video textures) and vol_geom (vologram meshes).
+lib/                 -- Core vologram processing libraries from [vol_libs](https://github.com/Volograms/vol_libs) repository.
 samples/             -- Simple example volograms;
 samples/cone_hdr.vol -- Vologram header for a 1-frame 3D cone.
 samples/cone_seq.vol -- Vologram sequence for the 1-frame 3D cone.
