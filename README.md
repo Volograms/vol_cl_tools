@@ -142,14 +142,22 @@ If we run the vol2obj program from a terminal, without arguments, it will tell u
 
 ```
 $  ./vol2obj.bin 
-Usage ./vol2obj.bin [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4
+Usage for single-file volograms:
+./vol2obj.bin [OPTIONS] -c MYFILE.VOLS
+
+Usage for multi-file volograms:
+./vol2obj.bin [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4
+
 Options:
 --all, -a
 Create output files for, and process, all frames found in the sequence.
-If given then paramters -f and -l are ignored.
+If given, then paramters -f and -l are ignored.
+
+--combined, -c
+Required for single-file volograms. The next argument gives the path to your myfile.vols.
 
 --header, -h
-Required. The next argument gives the path to the header.vols file.
+Required for multi-file volograms. The next argument gives the path to the header.vols file.
 
 --help
 Prints this text.
@@ -163,7 +171,7 @@ Default value 0.
 The next argument gives the frame number of the last frame to process.
 Can be used with -f to process a range of frames from first to last, inclusive.
 
---output_dir, -o
+--output-dir, -o
 The next argument gives the path to a directory to write output files into.
 Default is the current working directory.
 
@@ -172,10 +180,10 @@ The next argument gives the prefix to use for output filenames.
 Default is output_frame_.
 
 --sequence, -s
-Required. The next argument gives the path to the sequence_0.vols file.
+Required for multi-file volograms. The next argument gives the path to the sequence_0.vols file.
 
 --video, -v
-Required. The next argument gives the path to the video texture file.
+Required for multi-file volograms. The next argument gives the path to the video texture file.
 ```
 
 ### Examples
@@ -223,7 +231,7 @@ Vologram processing completed.
 
 ## Licence ##
 
-Copyright 2021, Volograms.
+Copyright 2023-2021, Volograms.
 The MIT License. See the `LICENSE` file for details.
 
 ### Dependencies
