@@ -31,7 +31,7 @@ bool vol_basis_transcode( //
   int* w_ptr, int* h_ptr      // Output: Dimensions of texture.
 ) {
   if ( !data_ptr || 0 == data_sz || !output_blocks_ptr || 0 == output_blocks_sz || !w_ptr || !h_ptr ) {
-    fprintf( stderr, "ERROR vol_basis_transcode invalid params {%p,%i,%p,%i,%p,%p}\n", data_ptr, data_sz, output_blocks_ptr, output_blocks_sz, w_ptr, h_ptr ); // TODO: remove
+    fprintf( stderr, "ERROR vol_basis_transcode invalid params {%p,%i,%p,%i,%p,%p}\n", data_ptr, data_sz, (void*)output_blocks_ptr, output_blocks_sz, (void*)w_ptr, (void*)h_ptr ); // TODO: remove
     return false;
   }
 
@@ -41,7 +41,9 @@ bool vol_basis_transcode( //
     return false;
   }
   basist::basis_texture_type basisTextureType = trans.get_texture_type( data_ptr, data_sz );
+  (void)basisTextureType;
   uint32_t n_images                           = trans.get_total_images( data_ptr, data_sz );
+  (void)n_images;
   basist::basisu_image_info image_info;
   uint32_t image_index = 0;
   trans.get_image_info( data_ptr, data_sz, image_info, image_index );
