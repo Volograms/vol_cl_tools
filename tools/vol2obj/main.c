@@ -88,6 +88,9 @@ static const char* STRC_RED     = "\x1B[31m";
 static const char* STRC_GREEN   = "\x1B[32m";
 static const char* STRC_YELLOW  = "\x1B[33m";
 
+static const int _dims_presize = 2048;
+static uint8_t* _output_blocks_ptr;
+
 typedef enum _log_type { _LOG_TYPE_INFO = 0, _LOG_TYPE_DEBUG, _LOG_TYPE_WARNING, _LOG_TYPE_ERROR, _LOG_TYPE_SUCCESS } _log_type;
 
 static void _printlog( _log_type log_type, const char* message_str, ... ) {
@@ -244,7 +247,7 @@ static char _material_name[MAX_SUBPATH_LEN];         // e.g. `volograms_mtl_0000
 static char _prefix_str[MAX_SUBPATH_LEN];            // defaults to `output_frame_`
 
 /// A homemade P3 ASCII PPM image writer. These images are very large, so only useful for debugging purposes.
-static bool write_rgb_image_to_ppm( const char* filename, uint8_t* image_ptr, int w, int h ) {
+static bool write_rgb_image_to_ppm( const char* filename, const uint8_t* image_ptr, int w, int h ) {
   FILE* f_ptr = fopen( filename, "w" );
   if ( !f_ptr ) { return false; }
   fprintf( f_ptr, "P3\n%i %i\n255\n", w, h );
@@ -260,21 +263,21 @@ static bool write_rgb_image_to_ppm( const char* filename, uint8_t* image_ptr, in
 }
 
 /// Writes the latest pixel buffer stored in _av_info into a file in the appropriate format.
-static bool _write_video_frame_to_image( const char* output_image_filename ) {
-  if ( !output_image_filename ) { return false; }
+static bool _write_video_frame_to_image( const char* output_image_filename, const uint8_t* pixels_ptr, int w, int h ) {
+  if ( !output_image_filename || !pixels_ptr || w <= 0 || h <= 0 ) { return false; }
 
   char full_path[MAX_FILENAME_LEN];
   sprintf( full_path, "%s%s", _output_dir_path, output_image_filename );
 
   switch ( _img_fmt ) {
   case IMG_FMT_PPM: {
-    if ( !write_rgb_image_to_ppm( full_path, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
+    if ( !write_rgb_image_to_ppm( full_path, pixels_ptr, w, h ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
       return false;
     }
   } break;
   case IMG_FMT_JPG: {
-    if ( !stbi_write_jpg( full_path, _av_info.w, _av_info.h, 3, _av_info.pixels_ptr, _jpeg_quality ) ) {
+    if ( !stbi_write_jpg( full_path, w, h, 3, pixels_ptr, _jpeg_quality ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
       return false;
     }
@@ -493,9 +496,20 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
   } // endif write mesh.
 
   // And texture.
-  if ( !use_vol_av ) {
-    // TODO(Anton) vol_basis_transcode();
-    // Write image file.
+  if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) { // texture_compression { 0=raw, 1=basis, 2=ktx2 }
+    uint8_t* data_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.texture_offset];
+    uint32_t data_sz  = intermediate_frame_data.texture_sz;
+    int w = 0, h = 0;
+    int format = 0; // { 0 = rgb, 1 = rgba, 3 = cTFBC3_RGBA }. Defined in basis_transcoder.h.
+    if ( !vol_basis_transcode( format, data_ptr, data_sz, _output_blocks_ptr, _dims_presize * _dims_presize * 4, &w, &h ) ) {
+      fprintf( stderr, "ERROR transcoding image %i failed\n", frame_idx );
+      return 1;
+    }
+
+    if ( !_write_video_frame_to_image( _output_img_filename, _output_blocks_ptr, w, h ) ) {
+      _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write .basis texture frame %i to image file `%s`\n", frame_idx, _output_img_filename );
+      success = false;
+    }
   }
 
   return success;
@@ -596,7 +610,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
       } // endswitch.
-      if ( !_write_video_frame_to_image( _output_img_filename ) ) {
+      if ( !_write_video_frame_to_image( _output_img_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
         return false; // Make sure we stop the processing at this point rather than carry on.
       }
@@ -651,6 +665,12 @@ int main( int argc, char** argv ) {
   int first_frame = 0;
   int last_frame  = 0;
   bool all_frames = false;
+
+  _output_blocks_ptr = (uint8_t*)malloc( _dims_presize * _dims_presize * 4 );
+  if ( !_output_blocks_ptr ) {
+    _printlog( _LOG_TYPE_ERROR, "ERROR Out of memory allocating block for output image.\n" );
+    return 1;
+  }
 
   my_argc        = argc;
   my_argv        = argv;
@@ -771,6 +791,8 @@ int main( int argc, char** argv ) {
   if ( !_process_vologram( first_frame, last_frame, all_frames ) ) { return 1; }
 
   _printlog( _LOG_TYPE_SUCCESS, "Vologram processing completed.\n" );
+
+  if ( _output_blocks_ptr ) { free( _output_blocks_ptr ); }
 
   return 0;
 }
