@@ -238,6 +238,7 @@ static vol_av_video_t _av_info;                      // Audio-video information 
 static vol_geom_info_t _geom_info;                   // Mesh information from vol_geom library.
 static char* _input_header_filename;                 // e.g. `header.vols`
 static char* _input_sequence_filename;               // e.g. `sequence.vols`
+static char* _input_combined_filename;               // e.g. `combined.vols`
 static char* _input_video_filename;                  // e.g. `texture_1024.webm`
 static char _output_dir_path[MAX_SUBPATH_LEN];       // e.g. `my_output/`
 static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000000.obj`
@@ -424,9 +425,9 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
  * @return
  * Returns false on error.
  */
-static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq_filename, const char* output_mesh_filename, const char* output_mtl_filename,
-  const char* material_name, int frame_idx, bool use_vol_av, const char* output_image_filename ) {
-  if ( !hdr_filename || !seq_filename || !output_mesh_filename || frame_idx < 0 ) { return false; }
+static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* combined_filename, const char* output_mesh_filename,
+  const char* output_mtl_filename, const char* material_name, int frame_idx, bool use_vol_av, const char* output_image_filename ) {
+  if ( !( seq_filename || combined_filename ) || !output_mesh_filename || frame_idx < 0 ) { return false; }
   if ( use_vol_av && !output_image_filename ) { return false; }
 
   vol_geom_frame_data_t keyframe_data           = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
@@ -440,7 +441,12 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
 
   { // Get data pointers.
     // If our frame isn't a keyframe then we need to load up the previous keyframe's data first...
-    if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
+    if ( combined_filename ) {
+      if ( !vol_geom_read_frame( combined_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
+        return false;
+      }
+    } else if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
       return false;
     }
@@ -457,8 +463,13 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
     // ...and then add our frame's subset of the data second.
     if ( prev_key_idx != frame_idx ) {
       // Read the non-keyframe (careful with mem leaks).
-      if ( !vol_geom_read_frame( seq_filename, &_geom_info, frame_idx, &intermediate_frame_data ) ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry intermediate frame %i\n", frame_idx );
+      if ( combined_filename ) {
+        if ( !vol_geom_read_frame( combined_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
+          _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
+          return false;
+        }
+      } else if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
         return false;
       }
       points_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.vertices_offset];
@@ -495,22 +506,23 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
     success = false;
   } // endif write mesh.
 
-  // And texture.
-  if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) { // texture_compression { 0=raw, 1=basis, 2=ktx2 }
+  // And texture. Texture_compression { 0=raw, 1=basis, 2=ktx2 }.
+  if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+    // TODO(Anton) Handle RAW and KTX2.
     uint8_t* data_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.texture_offset];
     uint32_t data_sz  = intermediate_frame_data.texture_sz;
     int w = 0, h = 0;
     int format = 0; // { 0 = rgb, 1 = rgba, 3 = cTFBC3_RGBA }. Defined in basis_transcoder.h.
     if ( !vol_basis_transcode( format, data_ptr, data_sz, _output_blocks_ptr, _dims_presize * _dims_presize * 4, &w, &h ) ) {
       fprintf( stderr, "ERROR transcoding image %i failed\n", frame_idx );
-      return 1;
+      return false;
     }
 
     if ( !_write_video_frame_to_image( _output_img_filename, _output_blocks_ptr, w, h ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write .basis texture frame %i to image file `%s`\n", frame_idx, _output_img_filename );
       success = false;
     }
-  }
+  } // endif Texture/Basis.
 
   return success;
 }
@@ -524,12 +536,18 @@ static bool _write_geom_frame_to_mesh( const char* hdr_filename, const char* seq
  */
 static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames ) {
   bool use_vol_av = false;
-  { // mesh and video processing
-    if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, true ) ) {
+  { // Mesh and video processing.
+    if ( _input_combined_filename ) {
+      if ( !vol_geom_create_file_info_from_file( _input_combined_filename, &_geom_info ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open combined vologram file=%s. Check for file mismatches.\n", _input_combined_filename );
+        return false;
+      }
+    } else if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, true ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open geometry files header=%s sequence=%s. Check for header and sequenece file mismatches.\n",
         _input_header_filename, _input_sequence_filename );
       return false;
     }
+
     if ( _geom_info.hdr.version < 13 ) {
       use_vol_av = true;
     } else {
@@ -557,8 +575,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       } // endswitch.
 
       // And geometry.
-      if ( !_write_geom_frame_to_mesh( _input_header_filename, _input_sequence_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i,
-             use_vol_av, _output_img_filename ) ) {
+      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i, use_vol_av, _output_img_filename ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         return false;
       }
@@ -677,6 +694,8 @@ int main( int argc, char** argv ) {
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
   strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
 
+  // TODO(Anton) 2==argc could check if it's a) directory or b) combined vols file.
+
   // Check for drag-and-drop directory.
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
     int len = strlen( argv[1] );
@@ -719,7 +738,7 @@ int main( int argc, char** argv ) {
       }
       all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
       if ( _option_arg_indices[CL_COMBINED] ) {
-        // TODO(Anton).
+        _input_combined_filename = my_argv[_option_arg_indices[CL_COMBINED] + 1];
       } else if ( !_option_arg_indices[CL_HEADER] && !_option_arg_indices[CL_SEQUENCE] ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --combined is missing. Run with --help for details.\n" );
         return 1;
