@@ -264,7 +264,7 @@ static bool write_rgb_image_to_ppm( const char* filename, const uint8_t* image_p
 }
 
 /// Writes the latest pixel buffer stored in _av_info into a file in the appropriate format.
-static bool _write_video_frame_to_image( const char* output_image_filename, const uint8_t* pixels_ptr, int w, int h ) {
+static bool _write_video_frame_to_image( const char* output_image_filename, const uint8_t* pixels_ptr, int w, int h, int n ) {
   if ( !output_image_filename || !pixels_ptr || w <= 0 || h <= 0 ) { return false; }
 
   char full_path[MAX_FILENAME_LEN];
@@ -278,7 +278,7 @@ static bool _write_video_frame_to_image( const char* output_image_filename, cons
     }
   } break;
   case IMG_FMT_JPG: {
-    if ( !stbi_write_jpg( full_path, w, h, 3, pixels_ptr, _jpeg_quality ) ) {
+    if ( !stbi_write_jpg( full_path, w, h, n, pixels_ptr, _jpeg_quality ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
       return false;
     }
@@ -436,8 +436,8 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
 
   int prev_key_idx = vol_geom_find_previous_keyframe( &_geom_info, frame_idx );
 
-  uint8_t *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL, *indices_ptr = NULL;
-  int32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0;
+  uint8_t *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL, *indices_ptr = NULL, *texture_data_ptr = NULL;
+  int32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0, texture_data_sz = 0;
 
   { // Get data pointers.
     // If our frame isn't a keyframe then we need to load up the previous keyframe's data first...
@@ -454,11 +454,15 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
     points_ptr    = &keyframe_data.block_data_ptr[keyframe_data.vertices_offset];
     texcoords_ptr = &keyframe_data.block_data_ptr[keyframe_data.uvs_offset];
     if ( _geom_info.hdr.normals ) { normals_ptr = &keyframe_data.block_data_ptr[keyframe_data.normals_offset]; }
-    indices_ptr  = &keyframe_data.block_data_ptr[keyframe_data.indices_offset];
-    points_sz    = keyframe_data.vertices_sz;
-    texcoords_sz = keyframe_data.uvs_sz;
-    normals_sz   = keyframe_data.normals_sz;
-    indices_sz   = keyframe_data.indices_sz;
+    if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+      texture_data_ptr = &keyframe_data.block_data_ptr[keyframe_data.texture_offset];
+    }
+    indices_ptr     = &keyframe_data.block_data_ptr[keyframe_data.indices_offset];
+    points_sz       = keyframe_data.vertices_sz;
+    texcoords_sz    = keyframe_data.uvs_sz;
+    normals_sz      = keyframe_data.normals_sz;
+    texture_data_sz = keyframe_data.texture_sz;
+    indices_sz      = keyframe_data.indices_sz;
 
     // ...and then add our frame's subset of the data second.
     if ( prev_key_idx != frame_idx ) {
@@ -477,6 +481,10 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
       if ( _geom_info.hdr.normals ) {
         normals_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.normals_offset];
         normals_sz  = intermediate_frame_data.normals_sz;
+      }
+      if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+        texture_data_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.texture_offset];
+        texture_data_sz  = intermediate_frame_data.texture_sz;
       }
     }
   } // endblock get data pointers.
@@ -509,16 +517,15 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
   // And texture. Texture_compression { 0=raw, 1=basis, 2=ktx2 }.
   if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
     // TODO(Anton) Handle RAW and KTX2.
-    uint8_t* data_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.texture_offset];
-    uint32_t data_sz  = intermediate_frame_data.texture_sz;
-    int w = 0, h = 0;
-    int format = 0; // { 0 = rgb, 1 = rgba, 3 = cTFBC3_RGBA }. Defined in basis_transcoder.h.
-    if ( !vol_basis_transcode( format, data_ptr, data_sz, _output_blocks_ptr, _dims_presize * _dims_presize * 4, &w, &h ) ) {
+    int w = 0, h = 0, n = 4;
+    int format = 13; // { 13 = cTFRGBA32, 3 = cTFBC3_RGBA }. Defined in basis_transcoder.h.
+    if ( !vol_basis_transcode( format, texture_data_ptr, texture_data_sz, _output_blocks_ptr, _dims_presize * _dims_presize * n, &w, &h ) ) {
       fprintf( stderr, "ERROR transcoding image %i failed\n", frame_idx );
       return false;
     }
 
-    if ( !_write_video_frame_to_image( _output_img_filename, _output_blocks_ptr, w, h ) ) {
+    printf( "DB writing %s with %ix%i@%i\n", _output_img_filename, w, h, n );
+    if ( !_write_video_frame_to_image( _output_img_filename, _output_blocks_ptr, w, h, n ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write .basis texture frame %i to image file `%s`\n", frame_idx, _output_img_filename );
       success = false;
     }
@@ -575,7 +582,8 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       } // endswitch.
 
       // And geometry.
-      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i, use_vol_av, _output_img_filename ) ) {
+      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i,
+             use_vol_av, _output_img_filename ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         return false;
       }
@@ -627,7 +635,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
       default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
       } // endswitch.
-      if ( !_write_video_frame_to_image( _output_img_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h ) ) {
+      if ( !_write_video_frame_to_image( _output_img_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h, 3 ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
         return false; // Make sure we stop the processing at this point rather than carry on.
       }
