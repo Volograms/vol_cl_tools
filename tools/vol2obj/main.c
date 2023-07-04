@@ -738,8 +738,6 @@ int main( int argc, char** argv ) {
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
   strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
 
-  // TODO(Anton) 2==argc could check if it's a) directory or b) combined vols file.
-
   // Check for drag-and-drop directory.
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
     size_t len = strlen( argv[1] );
@@ -766,6 +764,10 @@ int main( int argc, char** argv ) {
     _input_header_filename   = dad_hdr_str;
     _input_sequence_filename = dad_seq_str;
     _input_video_filename    = dad_vid_str;
+  } else if ( 2 == argc ) {
+    // Check for drag-and-drop of combined vols file.
+    _input_combined_filename = my_argv[1];
+    printf( " using -c as %s\n", _input_combined_filename );
   } else {
     // Check for command line parameters.
     if ( !_evaluate_params() ) { return 1; }
