@@ -72,12 +72,15 @@
 
 #if defined( _WIN32 ) || defined( _WIN64 )
 #include <direct.h>
+//#include <fileapi.h>
 #include <windows.h>
 #else
 #include <dirent.h>   // DIR
 #include <sys/stat.h> // mkdir
+#define _XOPEN_SOURCE_EXTENDED 1
+#include <sys/statvfs.h>
 #include <errno.h>
-#endif                /* endif _WIN32 || _WIN64. */
+#endif /* endif _WIN32 || _WIN64. */
 
 #define MAX_FILENAME_LEN 4096
 #define MAX_SUBPATH_LEN 1024
@@ -90,6 +93,22 @@ static const char* STRC_YELLOW  = "\x1B[33m";
 
 static const int _dims_presize = 2048;
 static uint8_t* _output_blocks_ptr;
+
+static bool _bytes_free_on_disk( const char* path_str, uint64_t* free_sz_ptr, uint64_t* total_sz_ptr ) {
+  if ( !free_sz_ptr || !total_sz_ptr ) { return false; }
+#if defined( _WIN32 ) || defined( _WIN64 )
+  uint64_t free_byte_to_caller = 0, total_bytes = 0, free_bytes = 0;
+  if ( !GetDiskFreeSpaceEx( path_str, (PULARGE_INTEGER)&free_byte_to_caller, (PULARGE_INTEGER)&total_bytes, (PULARGE_INTEGER)&free_bytes ) ) { return false; }
+  *free_sz_ptr  = free_byte_to_caller;
+  *total_sz_ptr = total_bytes;
+#else
+  struct statvfs buf;
+  if ( -1 == statvfs( path_str, &buf ) ) { return false; }
+  *free_sz_ptr  = (uint64_t)buf.f_bavail * (uint64_t)buf.f_frsize;
+  *total_sz_ptr = (uint64_t)buf.f_blocks * (uint64_t)buf.f_frsize;
+#endif
+  return true;
+}
 
 typedef enum _log_type { _LOG_TYPE_INFO = 0, _LOG_TYPE_DEBUG, _LOG_TYPE_WARNING, _LOG_TYPE_ERROR, _LOG_TYPE_SUCCESS } _log_type;
 
@@ -266,6 +285,22 @@ static bool write_rgb_image_to_ppm( const char* filename, const uint8_t* image_p
 /// Writes the latest pixel buffer stored in _av_info into a file in the appropriate format.
 static bool _write_video_frame_to_image( const char* output_image_filename, const uint8_t* pixels_ptr, int w, int h, int n ) {
   if ( !output_image_filename || !pixels_ptr || w <= 0 || h <= 0 ) { return false; }
+
+  { // Size check.
+    uint64_t avail_bytes = 0, total_bytes = 0;
+    if ( !_bytes_free_on_disk( _output_dir_path, &avail_bytes, &total_bytes ) ) {
+      _printlog( _LOG_TYPE_WARNING, "WARNING: Could not retrieve bytes available on disk.\n" );
+    } else {
+      uint64_t avail_mb = avail_bytes / ( 1024 * 1024 );
+      uint64_t total_mb = total_bytes / ( 1024 * 1024 );
+      printf( "Available space %u/%u MB\n", (uint32_t)avail_mb, (uint32_t)total_mb );
+      uint64_t min_bytes = w * h * n;
+      if ( avail_bytes <= min_bytes ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Out of space on disk for writing image frames. Available space %u/%u MB\n", (uint32_t)avail_mb, (uint32_t)total_mb );
+        return false;
+      }
+    }
+  } // endblock Size check.
 
   char full_path[MAX_FILENAME_LEN];
   sprintf( full_path, "%s%s", _output_dir_path, output_image_filename );
@@ -655,7 +690,7 @@ static bool _does_dir_exist( const char* dir_path ) {
   DWORD attribs = GetFileAttributes( dir_path );
   return ( attribs != INVALID_FILE_ATTRIBUTES && ( attribs & FILE_ATTRIBUTE_DIRECTORY ) );
 #else
-  DIR* dir = opendir( dir_path );
+  DIR* dir      = opendir( dir_path );
   if ( dir ) {
     closedir( dir );
     return true;
@@ -706,7 +741,7 @@ int main( int argc, char** argv ) {
 
   // Check for drag-and-drop directory.
   if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
-    int len = strlen( argv[1] );
+    size_t len = strlen( argv[1] );
     strncat( dad_hdr_str, argv[1], MAX_FILENAME_LEN - 1 );
     strncat( dad_seq_str, argv[1], MAX_FILENAME_LEN - 1 );
     strncat( dad_vid_str, argv[1], MAX_FILENAME_LEN - 1 );

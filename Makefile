@@ -36,7 +36,7 @@ ifeq ($(OS),Windows_NT)
 	LIB_DIR_AV = ./thirdparty/ffmpeg/lib/vs/x64/
 	LIB_DIR   += -L $(LIB_DIR_AV)
 	STA_LIB_AV = $(LIB_DIR_AV)avcodec.lib $(LIB_DIR_AV)avdevice.lib $(LIB_DIR_AV)avformat.lib $(LIB_DIR_AV)avutil.lib $(LIB_DIR_AV)swscale.lib 
-	CLEAN_CMD  = 
+	CLEAN_CMD  = del /Q *.bin *.o lib\*.o thirdparty\basis_universal\*.o
 else
 	DYN_LIB_AV  += -lm
 	UNAME_S      = $(shell uname -s)

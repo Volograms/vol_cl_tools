@@ -29,9 +29,12 @@ set I=/I ..\lib\ ^
 /I ..\thirdparty\ ^
 /I ..\thirdparty\ffmpeg\include\
 
-set SRC=..\tools\vol2obj\main.c ^
+set SRC= ^
+..\tools\vol2obj\main.c ^
+..\lib\vol_av.c ^
+..\lib\vol_basis.cpp ^
 ..\lib\vol_geom.c ^
-..\lib\vol_av.c
+..\thirdparty\basis_universal\transcoder\basisu_transcoder.cpp
 
 cl %COMPILER_FLAGS% %SRC% %I% /link %LINKER_FLAGS% %LIBS%
 copy vol2obj.exe ..\
