@@ -72,7 +72,7 @@
 
 #if defined( _WIN32 ) || defined( _WIN64 )
 #include <direct.h>
-//#include <fileapi.h>
+#include <fileapi.h>
 #include <windows.h>
 #else
 #include <dirent.h>   // DIR
@@ -288,12 +288,13 @@ static bool _write_video_frame_to_image( const char* output_image_filename, cons
 
   { // Size check.
     uint64_t avail_bytes = 0, total_bytes = 0;
-    if ( !_bytes_free_on_disk( _output_dir_path, &avail_bytes, &total_bytes ) ) {
+    const char* ptr = NULL;
+    if ( _output_dir_path[0] != '\0' ) { ptr = _output_dir_path; }
+    if ( !_bytes_free_on_disk( ptr, &avail_bytes, &total_bytes ) ) {
       _printlog( _LOG_TYPE_WARNING, "WARNING: Could not retrieve bytes available on disk.\n" );
     } else {
-      uint64_t avail_mb = avail_bytes / ( 1024 * 1024 );
-      uint64_t total_mb = total_bytes / ( 1024 * 1024 );
-      printf( "Available space %u/%u MB\n", (uint32_t)avail_mb, (uint32_t)total_mb );
+      uint64_t avail_mb  = avail_bytes / ( 1024 * 1024 );
+      uint64_t total_mb  = total_bytes / ( 1024 * 1024 );
       uint64_t min_bytes = w * h * n;
       if ( avail_bytes <= min_bytes ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Out of space on disk for writing image frames. Available space %u/%u MB\n", (uint32_t)avail_mb, (uint32_t)total_mb );
