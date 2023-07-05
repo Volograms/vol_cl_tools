@@ -1,7 +1,7 @@
 # vol_cl_tools
-Command-line tools for converting [Volograms](https://www.Volograms.com/)' 3D format.
+Command-line tools for converting [Volograms](https://www.volograms.com/)' 3D format.
 
-The most common use of these tools is to convert 3D captures of people made with the [Volu](https://www.Volograms.com/volu) phone app into
+The most common use of these tools is to convert 3D captures of people made with the [Volu](https://www.volograms.com/volu) phone app into
 a common 3D model format (Wavefront .obj) so that you can import it in Unity 3D game projects, use for 3D printing, or in other creative projects.
 
 Tools can be built and run for GNU/Linux, macOS, and Microsoft Windows environments.
