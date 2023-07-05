@@ -72,7 +72,7 @@
 
 #if defined( _WIN32 ) || defined( _WIN64 )
 #include <direct.h>
-//#include <fileapi.h> // Already pulled in by windows.h. Including explicitly drags in winnt.h which causes some build warnings.
+// #include <fileapi.h> // Already pulled in by windows.h. Including explicitly drags in winnt.h which causes some build warnings.
 #include <windows.h>
 #else
 #include <dirent.h>   // DIR
