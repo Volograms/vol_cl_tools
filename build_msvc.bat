@@ -11,7 +11,7 @@ REM call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\VC\Auxi
 
 REM "we recommend you compile by using either the /W3 or /W4 warning level"
 REM C4221 is nonstandard extension used in struct literals.
-set COMPILER_FLAGS=/W4 /D_CRT_SECURE_NO_WARNINGS /wd4221
+set COMPILER_FLAGS=/W4 /D_CRT_SECURE_NO_WARNINGS /wd4221 /fno-strict-aliasing /DBASISD_SUPPORT_KTX2=0
 set LINKER_FLAGS=/out:vol2obj.exe
 set LIBS= ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avcodec.lib ^
