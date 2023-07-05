@@ -282,7 +282,9 @@ static bool write_rgb_image_to_ppm( const char* filename, const uint8_t* image_p
   return true;
 }
 
-/// Writes the latest pixel buffer stored in _av_info into a file in the appropriate format.
+/** Writes the latest pixel buffer into a file in the appropriate format.
+ * @param w,h,n Height and width of image, and number of colours channels, respectively.
+ */
 static bool _write_video_frame_to_image( const char* output_image_filename, const uint8_t* pixels_ptr, int w, int h, int n ) {
   if ( !output_image_filename || !pixels_ptr || w <= 0 || h <= 0 ) { return false; }
 
@@ -380,8 +382,6 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   int n_vertices, const float* texcoords_ptr, int n_texcoords, const float* normals_ptr, int n_normals, const void* indices_ptr, int n_indices, int index_type ) {
   if ( !output_mesh_filename ) { return false; }
 
-  // TODO(Anton) validate fprintfs here too for e.g. failures when running out of disk space.
-
   char full_path[MAX_FILENAME_LEN];
   sprintf( full_path, "%s%s", _output_dir_path, output_mesh_filename );
 
@@ -391,10 +391,11 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
     return false;
   }
 
-  fprintf( f_ptr, "#Exported by Volograms vols2obj\n" );
+  if ( 0 == fprintf( f_ptr, "#Exported by Volograms vols2obj\n" ) ) { goto _wmo2f_fail; }
+  // mtllib must go before usemtl or some viewers won't load the texture.
   if ( output_mtl_filename ) {
-    fprintf( f_ptr, "mtllib %s\n", output_mtl_filename ); // mtllib must go before usemtl or some viewers won't load the texture.
-    fprintf( f_ptr, "usemtl %s\n", material_name );
+    if ( 0 == fprintf( f_ptr, "mtllib %s\n", output_mtl_filename ) ) { goto _wmo2f_fail; }
+    if ( 0 == fprintf( f_ptr, "usemtl %s\n", material_name ) ) { goto _wmo2f_fail; }
   }
 
   assert( vertices_ptr && "Hey if there are no vertex points Anton should make sure that is accounted for in the f section" );
@@ -403,7 +404,8 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       float x = vertices_ptr[i * 3 + 0];
       float y = vertices_ptr[i * 3 + 1];
       float z = vertices_ptr[i * 3 + 2];
-      fprintf( f_ptr, "v %0.3f %0.3f %0.3f\n", -x, y, z ); // NOTE(Anton) reversed X. could instead reverse Z but then need to import in blender as "Z forward".
+      // Reversed X. could instead reverse Z but then need to import in blender as "Z forward".
+      if ( 0 == fprintf( f_ptr, "v %0.3f %0.3f %0.3f\n", -x, y, z ) ) { goto _wmo2f_fail; }
     }
   }
   assert( texcoords_ptr && "Hey if there are no UVs Anton should make sure that is accounted for in the f section" );
@@ -411,16 +413,15 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
     for ( int i = 0; i < n_texcoords; i++ ) {
       float s = texcoords_ptr[i * 2 + 0];
       float t = texcoords_ptr[i * 2 + 1];
-      fprintf( f_ptr, "vt %0.3f %0.3f\n", s, t );
+      if ( 0 == fprintf( f_ptr, "vt %0.3f %0.3f\n", s, t ) ) { goto _wmo2f_fail; }
     }
   }
-  // assert( normals_ptr && "Hey if there are no normals Anton should make sure that is accounted for in the f section" );
   if ( normals_ptr ) {
     for ( int i = 0; i < n_normals; i++ ) {
       float x = normals_ptr[i * 3 + 0];
       float y = normals_ptr[i * 3 + 1];
       float z = normals_ptr[i * 3 + 2];
-      fprintf( f_ptr, "vn %0.3f %0.3f %0.3f\n", -x, y, z );
+      if ( 0 == fprintf( f_ptr, "vn %0.3f %0.3f %0.3f\n", -x, y, z ) ) { goto _wmo2f_fail; }
     }
   }
   assert( indices_ptr && "Hey if there are no indices Anton should make sure that is accounted for in the f section" );
@@ -440,9 +441,11 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       int c = (int)( i_u16_ptr[i * 3 + 2] ) + 1;
       // NOTE VOLS winding order is CW (similar to Unity) rather than typical CCW so let's reverse it for OBJ.
       if ( normals_ptr ) {
-        fprintf( f_ptr, "f %i/%i/%i %i/%i/%i %i/%i/%i\n", c, c, c, b, b, b, a, a, a ); // f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3 ...
+        // f v1/vt1/vn1 v2/vt2/vn2 v3/vt3/vn3 ...
+        if ( 0 == fprintf( f_ptr, "f %i/%i/%i %i/%i/%i %i/%i/%i\n", c, c, c, b, b, b, a, a, a ) ) { goto _wmo2f_fail; }
       } else {
-        fprintf( f_ptr, "f %i/%i %i/%i %i/%i\n", c, c, b, b, a, a );                   // f v1/vt1 v2/vt2 v3/vt3 ...
+        // f v1/vt1 v2/vt2 v3/vt3 ...
+        if ( 0 == fprintf( f_ptr, "f %i/%i %i/%i %i/%i\n", c, c, b, b, a, a ) ) { goto _wmo2f_fail; }
       }
     }
   }
@@ -451,6 +454,11 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   _printlog( _LOG_TYPE_INFO, "Wrote mesh file `%s`.\n", full_path );
 
   return true;
+
+_wmo2f_fail:
+  fclose( f_ptr );
+  _printlog( _LOG_TYPE_ERROR, "ERROR: Could not write mesh file `%s`.\n", full_path );
+  return false;
 }
 
 /**
@@ -559,8 +567,6 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
       fprintf( stderr, "ERROR transcoding image %i failed\n", frame_idx );
       return false;
     }
-
-    printf( "DB writing %s with %ix%i@%i\n", _output_img_filename, w, h, n );
     if ( !_write_video_frame_to_image( _output_img_filename, _output_blocks_ptr, w, h, n ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write .basis texture frame %i to image file `%s`\n", frame_idx, _output_img_filename );
       success = false;
