@@ -216,7 +216,7 @@ static int _option_arg_indices[CL_MAX];
  * Registers any valid params found, with their index in argv, in _option_arg_indices.
  * @returns Returns false if anything is out of order, or an unrecognised flag is found.
  */
-static bool _evaluate_params() {
+static bool _evaluate_params( void ) {
   for ( int argv_idx = 1; argv_idx < my_argc; argv_idx++ ) {
     bool found_valid_arg = false;
     // If starts with a '-' check if a known option.
