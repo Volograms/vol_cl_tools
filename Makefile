@@ -5,21 +5,21 @@
 # make -e SANS="" -e CC=gcc -e "FLAGS=-std=c99 -m64 -Wfatal-errors -Wextra -Wall"
 
 CC          = clang
-CPP			= clang++
+CPP         = clang++
 # -Werror is useful when upgrading the API as it upgrades deprecation warnings to errors.
 # D_POSIX_C_SOURCE flag includes POSIX commands like ftello() that are not in strict C. Alternatively; -std=gnu99.
 # D_FILE_OFFSET_BITS enforces 64-bit file offsets for large file IO, even on 32-bit platforms.
 FLAGS       = -m64 -Wfatal-errors -pedantic -Wextra -Wall
-FLAGSC		= -std=c99
-FLAGSCPP	= -std=c++11
+FLAGSC      = -std=c99
+FLAGSCPP    = -std=c++11
 DEBUG       = -g -D_POSIX_C_SOURCE=200808L -D_FILE_OFFSET_BITS=64
-#-DVOL_AV_DEBUG -DVOL_GEOM_DEBUG 
-#SANS        = -fsanitize=address -fsanitize=undefined 
+#-DVOL_AV_DEBUG -DVOL_GEOM_DEBUG
+#SANS        = -fsanitize=address -fsanitize=undefined
 INC_DIR     = -I lib/ -I thirdparty/
 SRC_AV      = lib/vol_av.c
 SRC_GEOM    = lib/vol_geom.c
-STA_LIB_AV  = 
-STA_LIB_GL  = 
+STA_LIB_AV  =
+STA_LIB_GL  =
 DYN_LIB_AV  = -lavcodec -lavdevice -lavformat -lavutil -lswscale
 LIB_DIR     = -L ./
 BIN_EXT     = .bin
@@ -51,7 +51,7 @@ all: vol2obj
 
 thirdparty/basis_universal/basisu_transcoder.o:
 	$(CPP) $(FLAGSCPP) -m64 -Wfatal-errors $(DEBUG) $(SANS) -fno-strict-aliasing -DBASISD_SUPPORT_KTX2=0 -o thirdparty/basis_universal/basisu_transcoder.o -c thirdparty/basis_universal/transcoder/basisu_transcoder.cpp $(INC_DIR)
-	
+
 lib/vol_basis.o:
 	$(CPP) $(FLAGSCPP) $(FLAGS) $(DEBUG) $(SANS) -o lib/vol_basis.o -c lib/vol_basis.cpp $(INC_DIR)
 
