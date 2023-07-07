@@ -130,7 +130,6 @@ static void _printlog( _log_type log_type, const char* message_str, ... ) {
   fprintf( stream_ptr, "%s", STRC_DEFAULT );
 }
 
-// TODO(Anton) add Basis & KTX.
 typedef enum img_fmt_t {
   IMG_FMT_PPM = 0, // homemade
   IMG_FMT_JPG,     // uses library
@@ -292,8 +291,9 @@ static bool _write_video_frame_to_image( const char* output_image_filename, cons
     uint64_t avail_bytes = 0, total_bytes = 0;
     const char* ptr = NULL;
     if ( _output_dir_path[0] != '\0' ) { ptr = _output_dir_path; }
+    if ( !ptr ) { ptr = "."; } // POSIX doesn't like NULL. TODO(Anton) check on Windows.
     if ( !_bytes_free_on_disk( ptr, &avail_bytes, &total_bytes ) ) {
-      _printlog( _LOG_TYPE_WARNING, "WARNING: Could not retrieve bytes available on disk.\n" );
+      _printlog( _LOG_TYPE_WARNING, "WARNING: Could not retrieve bytes available on disk for path `%s`.\n", ptr );
     } else {
       uint64_t avail_mb  = avail_bytes / ( 1024 * 1024 );
       uint64_t total_mb  = total_bytes / ( 1024 * 1024 );
@@ -474,61 +474,53 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
   if ( !( seq_filename || combined_filename ) || !output_mesh_filename || frame_idx < 0 ) { return false; }
   if ( use_vol_av && !output_image_filename ) { return false; }
 
-  vol_geom_frame_data_t keyframe_data           = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
-  vol_geom_frame_data_t intermediate_frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
-  bool success                                  = true;
-
-  int prev_key_idx = vol_geom_find_previous_keyframe( &_geom_info, frame_idx );
+  vol_geom_frame_data_t frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
+  const char* filename             = combined_filename ? combined_filename : seq_filename;
+  bool success                     = true;
+  int key_idx                      = vol_geom_find_previous_keyframe( &_geom_info, frame_idx );
 
   uint8_t *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL, *indices_ptr = NULL, *texture_data_ptr = NULL;
   int32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0, texture_data_sz = 0;
 
   { // Get data pointers.
-    // If our frame isn't a keyframe then we need to load up the previous keyframe's data first...
-    if ( combined_filename ) {
-      if ( !vol_geom_read_frame( combined_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
-        return false;
-      }
-    } else if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
-      _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
+
+    // TODO Performance improvement - don't load the key if already loaded.
+
+    // If our frame isn't a keyframe then we need to load the previous keyframe's data first...
+    if ( !vol_geom_read_frame( filename, &_geom_info, key_idx, &frame_data ) ) {
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", key_idx );
       return false;
     }
 
-    points_ptr    = &keyframe_data.block_data_ptr[keyframe_data.vertices_offset];
-    texcoords_ptr = &keyframe_data.block_data_ptr[keyframe_data.uvs_offset];
-    if ( _geom_info.hdr.normals ) { normals_ptr = &keyframe_data.block_data_ptr[keyframe_data.normals_offset]; }
+    points_ptr    = &frame_data.block_data_ptr[frame_data.vertices_offset];
+    texcoords_ptr = &frame_data.block_data_ptr[frame_data.uvs_offset];
+    if ( _geom_info.hdr.normals ) { normals_ptr = &frame_data.block_data_ptr[frame_data.normals_offset]; }
     if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-      texture_data_ptr = &keyframe_data.block_data_ptr[keyframe_data.texture_offset];
+      texture_data_ptr = &frame_data.block_data_ptr[frame_data.texture_offset];
     }
-    indices_ptr     = &keyframe_data.block_data_ptr[keyframe_data.indices_offset];
-    points_sz       = keyframe_data.vertices_sz;
-    texcoords_sz    = keyframe_data.uvs_sz;
-    normals_sz      = keyframe_data.normals_sz;
-    texture_data_sz = keyframe_data.texture_sz;
-    indices_sz      = keyframe_data.indices_sz;
+    indices_ptr     = &frame_data.block_data_ptr[frame_data.indices_offset];
+    points_sz       = frame_data.vertices_sz;
+    texcoords_sz    = frame_data.uvs_sz;
+    normals_sz      = frame_data.normals_sz;
+    texture_data_sz = frame_data.texture_sz;
+    indices_sz      = frame_data.indices_sz;
 
     // ...and then add our frame's subset of the data second.
-    if ( prev_key_idx != frame_idx ) {
+    if ( key_idx != frame_idx ) {
       // Read the non-keyframe (careful with mem leaks).
-      if ( combined_filename ) {
-        if ( !vol_geom_read_frame( combined_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
-          _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
-          return false;
-        }
-      } else if ( !vol_geom_read_frame( seq_filename, &_geom_info, prev_key_idx, &keyframe_data ) ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", prev_key_idx );
+      if ( !vol_geom_read_frame( filename, &_geom_info, frame_idx, &frame_data ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", frame_idx );
         return false;
       }
-      points_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.vertices_offset];
-      points_sz  = intermediate_frame_data.vertices_sz;
+      points_ptr = &frame_data.block_data_ptr[frame_data.vertices_offset];
+      points_sz  = frame_data.vertices_sz;
       if ( _geom_info.hdr.normals ) {
-        normals_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.normals_offset];
-        normals_sz  = intermediate_frame_data.normals_sz;
+        normals_ptr = &frame_data.block_data_ptr[frame_data.normals_offset];
+        normals_sz  = frame_data.normals_sz;
       }
       if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-        texture_data_ptr = &intermediate_frame_data.block_data_ptr[intermediate_frame_data.texture_offset];
-        texture_data_sz  = intermediate_frame_data.texture_sz;
+        texture_data_ptr = &frame_data.block_data_ptr[frame_data.texture_offset];
+        texture_data_sz  = frame_data.texture_sz;
       }
     }
   } // endblock get data pointers.
