@@ -815,7 +815,7 @@ int main( int argc, char** argv ) {
         int plen            = (int)strlen( my_argv[_option_arg_indices[CL_OUTPUT_DIR] + 1] );
         int l               = plen < MAX_FILENAME_LEN - 1 ? plen : MAX_FILENAME_LEN - 1;
         strncat( _output_dir_path, my_argv[_option_arg_indices[CL_OUTPUT_DIR] + 1], l );
-        // remove any existing path slashes and put a *nix slash at the end
+        // Remove any existing path slashes and put a *nix slash at the end.
         if ( l > 0 && ( _output_dir_path[l - 1] == '/' || _output_dir_path[l - 1] == '\\' ) ) { _output_dir_path[l - 1] = '\0'; }
         if ( l > 1 && _output_dir_path[l - 2] == '\\' ) { _output_dir_path[l - 2] = '\0'; }
         strncat( _output_dir_path, "/", MAX_SUBPATH_LEN - 1 );
