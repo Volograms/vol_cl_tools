@@ -379,7 +379,8 @@ the map_Kd value is multiplied by the Kd value.
  * @param output_mtl_filename If NULL then no MTL section or link is added to the Obj.
  */
 static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const char* output_mtl_filename, const char* material_name, const float* vertices_ptr,
-  int n_vertices, const float* texcoords_ptr, int n_texcoords, const float* normals_ptr, int n_normals, const void* indices_ptr, int n_indices, int index_type ) {
+  uint32_t n_vertices, const float* texcoords_ptr, uint32_t n_texcoords, const float* normals_ptr, uint32_t n_normals, const void* indices_ptr,
+  uint32_t n_indices, int index_type ) {
   if ( !output_mesh_filename ) { return false; }
 
   char full_path[MAX_FILENAME_LEN];
@@ -400,7 +401,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
 
   assert( vertices_ptr && "No vertices in vologram frame." );
   if ( vertices_ptr ) {
-    for ( int i = 0; i < n_vertices; i++ ) {
+    for ( uint32_t i = 0; i < n_vertices; i++ ) {
       float x = vertices_ptr[i * 3 + 0];
       float y = vertices_ptr[i * 3 + 1];
       float z = vertices_ptr[i * 3 + 2];
@@ -410,14 +411,14 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
   }
   assert( texcoords_ptr && "No texture coords in vologram frame." );
   if ( texcoords_ptr ) {
-    for ( int i = 0; i < n_texcoords; i++ ) {
+    for ( uint32_t i = 0; i < n_texcoords; i++ ) {
       float s = texcoords_ptr[i * 2 + 0];
       float t = texcoords_ptr[i * 2 + 1];
       if ( 0 == fprintf( f_ptr, "vt %0.3f %0.3f\n", s, t ) ) { goto _wmo2f_fail; }
     }
   }
   if ( normals_ptr ) {
-    for ( int i = 0; i < n_normals; i++ ) {
+    for ( uint32_t i = 0; i < n_normals; i++ ) {
       float x = normals_ptr[i * 3 + 0];
       float y = normals_ptr[i * 3 + 1];
       float z = normals_ptr[i * 3 + 2];
@@ -432,7 +433,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
     uint16_t* i_u16_ptr = (uint16_t*)indices_ptr;
     // OBJ spec:
     // "Faces are defined using lists of vertex, texture and normal indices in the format vertex_index/texture_index/normal_index for which each index starts at 1"
-    for ( int i = 0; i < n_indices / 3; i++ ) {
+    for ( uint32_t i = 0; i < n_indices / 3; i++ ) {
       // Index types: { 0=unsigned byte, 1=unsigned short, 2=unsigned int }.
       /* Integer[] if # vertices >= 65535 (Unity Version < 2017.3 does not support Integer indices) Short[] if # vertices < 65535. */
       assert( index_type == 1 );                 // Can come back and support other index types later.
@@ -481,31 +482,43 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
   bool success         = true;
   int key_idx          = vol_geom_find_previous_keyframe( &_geom_info, frame_idx );
 
-  uint8_t *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL, *indices_ptr = NULL, *texture_data_ptr = NULL;
-  int32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0, texture_data_sz = 0;
+  float *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL;
+  uint8_t *indices_ptr = NULL, *texture_data_ptr = NULL;
+  uint32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0, texture_data_sz = 0;
 
   { // Get data pointers.
     // If our frame isn't a keyframe then we need to load the previous keyframe's data first...
-    if ( _prev_key_frame_loadaed_idx != key_idx ) {
+    //if ( _prev_key_frame_loadaed_idx != key_idx ) {
+      {
+      printf( "loading new key\n" );
       if ( !vol_geom_read_frame( filename, &_geom_info, key_idx, &_key_frame_data ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
         return false;
       }
       _prev_key_frame_loadaed_idx = key_idx;
-    }
 
-    points_ptr    = &_key_frame_data.block_data_ptr[_key_frame_data.vertices_offset];
-    texcoords_ptr = &_key_frame_data.block_data_ptr[_key_frame_data.uvs_offset];
-    if ( _geom_info.hdr.normals ) { normals_ptr = &_key_frame_data.block_data_ptr[_key_frame_data.normals_offset]; }
-    if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-      texture_data_ptr = &_key_frame_data.block_data_ptr[_key_frame_data.texture_offset];
+      { // TODO fixup/optimise/validate
+        if ( key_idx == frame_idx ) {
+          points_sz   = _key_frame_data.vertices_sz;
+          normals_sz  = _key_frame_data.normals_sz;
+          points_ptr  = realloc( points_ptr, points_sz );
+          normals_ptr = realloc( normals_ptr, normals_sz );
+          memcpy( points_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.vertices_offset], points_sz );
+          memcpy( normals_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.normals_offset], normals_sz );
+          if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+            texture_data_sz  = _key_frame_data.texture_sz;
+            texture_data_ptr = realloc( texture_data_ptr, texture_data_sz );
+            memcpy( texture_data_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.texture_offset], texture_data_sz );
+          }
+        }
+        texcoords_sz  = _key_frame_data.uvs_sz;
+        indices_sz    = _key_frame_data.indices_sz;
+        texcoords_ptr = realloc( texcoords_ptr, texcoords_sz );
+        indices_ptr   = realloc( indices_ptr, indices_sz );
+        memcpy( texcoords_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.uvs_offset], texcoords_sz );
+        memcpy( indices_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.indices_offset], indices_sz );
+      }
     }
-    points_sz       = _key_frame_data.vertices_sz;
-    normals_sz      = _key_frame_data.normals_sz;
-    indices_ptr     = &_key_frame_data.block_data_ptr[_key_frame_data.indices_offset];
-    texcoords_sz    = _key_frame_data.uvs_sz;
-    texture_data_sz = _key_frame_data.texture_sz;
-    indices_sz      = _key_frame_data.indices_sz;
 
     // ...and then add our frame's subset of the data second.
     if ( key_idx != frame_idx ) {
@@ -515,36 +528,41 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", frame_idx );
         return false;
       }
-      points_ptr = &frame_data.block_data_ptr[frame_data.vertices_offset];
-      if ( _geom_info.hdr.normals ) { normals_ptr = &frame_data.block_data_ptr[frame_data.normals_offset]; }
-      if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-        texture_data_ptr = &frame_data.block_data_ptr[frame_data.texture_offset];
+      { // TODO fixup/optimise/validate
+        points_sz       = frame_data.vertices_sz;
+        normals_sz      = frame_data.normals_sz;
+        texture_data_sz = frame_data.texture_sz;
+        points_ptr      = realloc( points_ptr, points_sz );
+        normals_ptr     = realloc( normals_ptr, normals_sz );
+        memcpy( points_ptr, &frame_data.block_data_ptr[frame_data.vertices_offset], points_sz );
+        memcpy( normals_ptr, &frame_data.block_data_ptr[frame_data.normals_offset], normals_sz );
+        if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+          texture_data_ptr = realloc( texture_data_ptr, texture_data_sz );
+          memcpy( texture_data_ptr, &frame_data.block_data_ptr[frame_data.texture_offset], texture_data_sz );
+        }
       }
-      points_sz       = frame_data.vertices_sz;
-      normals_sz      = frame_data.normals_sz;
-      texture_data_sz = frame_data.texture_sz;
     }
   } // endblock get data pointers.
 
   // Write the .obj.
-  int n_points    = points_sz / ( sizeof( float ) * 3 );
-  int n_texcoords = texcoords_sz / ( sizeof( float ) * 2 );
-  int n_normals   = normals_sz / ( sizeof( float ) * 3 );
+  uint32_t n_points    = points_sz / ( sizeof( float ) * 3 );
+  uint32_t n_texcoords = texcoords_sz / ( sizeof( float ) * 2 );
+  uint32_t n_normals   = normals_sz / ( sizeof( float ) * 3 );
   // NOTE(Anton) hacked this in so only supporting uint16_t indices for now.
-  int indices_type = 1;                               // 1 is uint16_t.
-  int n_indices    = indices_sz / sizeof( uint16_t ); // NOTE(Anton) change if type changes!!!
-  if ( !_write_mesh_to_obj_file(                      //
-         output_mesh_filename,                        //
-         output_mtl_filename,                         //
-         material_name,                               //
-         (float*)points_ptr,                          //
-         n_points,                                    //
-         (float*)texcoords_ptr,                       //
-         n_texcoords,                                 //
-         (float*)normals_ptr,                         //
-         n_normals,                                   //
-         (void*)indices_ptr,                          //
-         n_indices,                                   //
+  int indices_type   = 1;                               // 1 is uint16_t.
+  uint32_t n_indices = indices_sz / sizeof( uint16_t ); // NOTE(Anton) change if type changes!!!
+  if ( !_write_mesh_to_obj_file(                        //
+         output_mesh_filename,                          //
+         output_mtl_filename,                           //
+         material_name,                                 //
+         points_ptr,                                    //
+         n_points,                                      //
+         texcoords_ptr,                                 //
+         n_texcoords,                                   //
+         normals_ptr,                                   //
+         n_normals,                                     //
+         indices_ptr,                                   //
+         n_indices,                                     //
          indices_type ) ) {
     _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write mesh file `%s`\n", output_mesh_filename );
     // Not returning false yet, but just setting a flag, because we still want to release resources.
@@ -566,6 +584,13 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
     }
   } // endif Texture/Basis.
 
+  { // TODO opt
+    if ( points_ptr ) { free( points_ptr ); }
+    if ( normals_ptr ) { free( normals_ptr ); }
+    if ( texcoords_ptr ) { free( texcoords_ptr ); }
+    if ( indices_ptr ) { free( indices_ptr ); }
+    if ( texture_data_ptr ) { free( texture_data_ptr ); }
+  }
   return success;
 }
 
