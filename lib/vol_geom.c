@@ -128,7 +128,7 @@ static bool _read_short_str( const uint8_t* data_ptr, uint32_t data_sz, vol_geom
   if ( !data_ptr || !sstr ) { return false; }
   if ( offset >= data_sz ) { return false; } // OOB
 
-  sstr->sz = data_ptr[offset]; // assumes the 1-byte length
+  sstr->sz = data_ptr[offset];               // assumes the 1-byte length
   if ( sstr->sz > 127 ) {
     _vol_loggerf( VOL_GEOM_LOG_TYPE_ERROR, "ERROR: string length %i given is > 127\n", (int)sstr->sz );
     return false;
@@ -292,7 +292,7 @@ static bool _build_frames_directory_from_file( const char* seq_filename, vol_geo
       }
       // version 10 doesn't have normals/texture, but 11 can do.
       if ( 11 == info_ptr->hdr.version ) {
-        info_ptr->frames_directory_ptr[i].corrected_payload_sz += 4; // normals sz
+        info_ptr->frames_directory_ptr[i].corrected_payload_sz += 4;   // normals sz
         if ( info_ptr->hdr.textured ) {
           info_ptr->frames_directory_ptr[i].corrected_payload_sz += 4; // texture sz
         }
@@ -352,7 +352,10 @@ void vol_geom_set_log_callback( void ( *user_function_ptr )( vol_geom_log_type_t
 void vol_geom_reset_log_callback( void ) { _logger_ptr = _default_logger; }
 
 bool vol_geom_read_hdr_from_mem( const uint8_t* data_ptr, uint32_t data_sz, vol_geom_file_hdr_t* hdr_ptr, vol_geom_size_t* hdr_sz_ptr ) {
-  if ( !data_ptr || !hdr_ptr || !hdr_sz_ptr || data_sz < VOL_GEOM_FILE_HDR_V10_MIN_SZ ) { return false; }
+  if ( !data_ptr || !hdr_ptr || !hdr_sz_ptr || data_sz < VOL_GEOM_FILE_HDR_V10_MIN_SZ ) {
+    _vol_loggerf( VOL_GEOM_LOG_TYPE_ERROR, "vol_geom_read_hdr_from_mem: invalid parameters\n" );
+    return false;
+  }
 
   vol_geom_size_t offset = 0;
   memset( hdr_ptr, 0, sizeof( vol_geom_file_hdr_t ) );
@@ -361,15 +364,23 @@ bool vol_geom_read_hdr_from_mem( const uint8_t* data_ptr, uint32_t data_sz, vol_
   if ( data_ptr[0] == 'V' && data_ptr[1] == 'O' && data_ptr[2] == 'L' && data_ptr[3] == 'S' ) {
     memcpy( hdr_ptr->format.bytes, data_ptr, 4 );
     hdr_ptr->format.sz = 4;
+    _vol_loggerf( VOL_GEOM_LOG_TYPE_DEBUG, "vol_geom_read_hdr_from_mem: format: %c, %c, %c, %c\n", data_ptr[0], data_ptr[1], data_ptr[2], data_ptr[3] );
     offset += 4;
   } else {
-    if ( !_read_short_str( data_ptr, data_sz, 0, &hdr_ptr->format ) ) { return false; }
-    if ( strncmp( "VOLS", hdr_ptr->format.bytes, 4 ) != 0 ) { return false; } // Format check.
+    if ( !_read_short_str( data_ptr, data_sz, 0, &hdr_ptr->format ) ) {
+      _vol_loggerf( VOL_GEOM_LOG_TYPE_ERROR, "vol_geom_read_hdr_from_mem: failed to read format\n" );
+      return false;
+    }
+    if ( strncmp( "VOLS", hdr_ptr->format.bytes, 4 ) != 0 ) {
+      _vol_loggerf( VOL_GEOM_LOG_TYPE_ERROR, "vol_geom_read_hdr_from_mem: failed format check\n" );
+      return false;
+    } // Format check.
     offset += ( hdr_ptr->format.sz + 1 );
   }
   if ( offset + 4 * (vol_geom_size_t)sizeof( uint32_t ) + 3 >= data_sz ) { return false; } // OOB
   memcpy( &hdr_ptr->version, &data_ptr[offset], sizeof( uint32_t ) );
   offset += (vol_geom_size_t)sizeof( uint32_t );
+  _vol_loggerf( VOL_GEOM_LOG_TYPE_DEBUG, "vol_geom_read_hdr_from_mem: detected header version %d", hdr_ptr->version );
   if ( hdr_ptr->version < 10 || hdr_ptr->version > 13 ) { return false; } // Version check.
   memcpy( &hdr_ptr->compression, &data_ptr[offset], sizeof( uint32_t ) );
   offset += (vol_geom_size_t)sizeof( uint32_t );
