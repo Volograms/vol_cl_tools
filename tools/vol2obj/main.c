@@ -266,7 +266,7 @@ static char _material_name[MAX_SUBPATH_LEN];         // e.g. `volograms_mtl_0000
 static char _prefix_str[MAX_SUBPATH_LEN];            // defaults to `output_frame_`
 
 /// A homemade P3 ASCII PPM image writer. These images are very large, so only useful for debugging purposes.
-static bool write_rgb_image_to_ppm( const char* filename, const uint8_t* image_ptr, int w, int h ) {
+static bool _write_rgb_image_to_ppm( const char* filename, const uint8_t* image_ptr, int w, int h ) {
   FILE* f_ptr = fopen( filename, "w" );
   if ( !f_ptr ) { return false; }
   fprintf( f_ptr, "P3\n%i %i\n255\n", w, h );
@@ -310,7 +310,7 @@ static bool _write_video_frame_to_image( const char* output_image_filename, cons
 
   switch ( _img_fmt ) {
   case IMG_FMT_PPM: {
-    if ( !write_rgb_image_to_ppm( full_path, pixels_ptr, w, h ) ) {
+    if ( !_write_rgb_image_to_ppm( full_path, pixels_ptr, w, h ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
       return false;
     }
@@ -398,7 +398,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
     if ( 0 == fprintf( f_ptr, "usemtl %s\n", material_name ) ) { goto _wmo2f_fail; }
   }
 
-  assert( vertices_ptr && "Hey if there are no vertex points Anton should make sure that is accounted for in the f section" );
+  assert( vertices_ptr && "No vertices in vologram frame." );
   if ( vertices_ptr ) {
     for ( int i = 0; i < n_vertices; i++ ) {
       float x = vertices_ptr[i * 3 + 0];
@@ -408,7 +408,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       if ( 0 == fprintf( f_ptr, "v %0.3f %0.3f %0.3f\n", -x, y, z ) ) { goto _wmo2f_fail; }
     }
   }
-  assert( texcoords_ptr && "Hey if there are no UVs Anton should make sure that is accounted for in the f section" );
+  assert( texcoords_ptr && "No texture coords in vologram frame." );
   if ( texcoords_ptr ) {
     for ( int i = 0; i < n_texcoords; i++ ) {
       float s = texcoords_ptr[i * 2 + 0];
@@ -424,7 +424,7 @@ static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const cha
       if ( 0 == fprintf( f_ptr, "vn %0.3f %0.3f %0.3f\n", -x, y, z ) ) { goto _wmo2f_fail; }
     }
   }
-  assert( indices_ptr && "Hey if there are no indices Anton should make sure that is accounted for in the f section" );
+  assert( indices_ptr && "No vertex indices in vologram frame." );
   if ( indices_ptr ) {
     // NOTE: If adding support for additional index types these may be required:
     // uint32_t* i_u32_ptr = (uint32_t*)indices_ptr;
@@ -461,6 +461,9 @@ _wmo2f_fail:
   return false;
 }
 
+static vol_geom_frame_data_t _key_frame_data;
+static int _prev_key_frame_loadaed_idx = -1;
+
 /**
  * @param output_mtl_filename
  * If NULL then no MTL section or link is added to the Obj.
@@ -474,54 +477,52 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
   if ( !( seq_filename || combined_filename ) || !output_mesh_filename || frame_idx < 0 ) { return false; }
   if ( use_vol_av && !output_image_filename ) { return false; }
 
-  vol_geom_frame_data_t frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
-  const char* filename             = combined_filename ? combined_filename : seq_filename;
-  bool success                     = true;
-  int key_idx                      = vol_geom_find_previous_keyframe( &_geom_info, frame_idx );
+  const char* filename = combined_filename ? combined_filename : seq_filename;
+  bool success         = true;
+  int key_idx          = vol_geom_find_previous_keyframe( &_geom_info, frame_idx );
 
   uint8_t *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL, *indices_ptr = NULL, *texture_data_ptr = NULL;
   int32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0, texture_data_sz = 0;
 
   { // Get data pointers.
-
-    // TODO Performance improvement - don't load the key if already loaded.
-
     // If our frame isn't a keyframe then we need to load the previous keyframe's data first...
-    if ( !vol_geom_read_frame( filename, &_geom_info, key_idx, &frame_data ) ) {
-      _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", key_idx );
-      return false;
+    if ( _prev_key_frame_loadaed_idx != key_idx ) {
+      if ( !vol_geom_read_frame( filename, &_geom_info, key_idx, &_key_frame_data ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
+        return false;
+      }
+      _prev_key_frame_loadaed_idx = key_idx;
     }
 
-    points_ptr    = &frame_data.block_data_ptr[frame_data.vertices_offset];
-    texcoords_ptr = &frame_data.block_data_ptr[frame_data.uvs_offset];
-    if ( _geom_info.hdr.normals ) { normals_ptr = &frame_data.block_data_ptr[frame_data.normals_offset]; }
+    points_ptr    = &_key_frame_data.block_data_ptr[_key_frame_data.vertices_offset];
+    texcoords_ptr = &_key_frame_data.block_data_ptr[_key_frame_data.uvs_offset];
+    if ( _geom_info.hdr.normals ) { normals_ptr = &_key_frame_data.block_data_ptr[_key_frame_data.normals_offset]; }
     if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-      texture_data_ptr = &frame_data.block_data_ptr[frame_data.texture_offset];
+      texture_data_ptr = &_key_frame_data.block_data_ptr[_key_frame_data.texture_offset];
     }
-    indices_ptr     = &frame_data.block_data_ptr[frame_data.indices_offset];
-    points_sz       = frame_data.vertices_sz;
-    texcoords_sz    = frame_data.uvs_sz;
-    normals_sz      = frame_data.normals_sz;
-    texture_data_sz = frame_data.texture_sz;
-    indices_sz      = frame_data.indices_sz;
+    points_sz       = _key_frame_data.vertices_sz;
+    normals_sz      = _key_frame_data.normals_sz;
+    indices_ptr     = &_key_frame_data.block_data_ptr[_key_frame_data.indices_offset];
+    texcoords_sz    = _key_frame_data.uvs_sz;
+    texture_data_sz = _key_frame_data.texture_sz;
+    indices_sz      = _key_frame_data.indices_sz;
 
     // ...and then add our frame's subset of the data second.
     if ( key_idx != frame_idx ) {
+      vol_geom_frame_data_t frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
       // Read the non-keyframe (careful with mem leaks).
       if ( !vol_geom_read_frame( filename, &_geom_info, frame_idx, &frame_data ) ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i\n", frame_idx );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", frame_idx );
         return false;
       }
       points_ptr = &frame_data.block_data_ptr[frame_data.vertices_offset];
-      points_sz  = frame_data.vertices_sz;
-      if ( _geom_info.hdr.normals ) {
-        normals_ptr = &frame_data.block_data_ptr[frame_data.normals_offset];
-        normals_sz  = frame_data.normals_sz;
-      }
+      if ( _geom_info.hdr.normals ) { normals_ptr = &frame_data.block_data_ptr[frame_data.normals_offset]; }
       if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
         texture_data_ptr = &frame_data.block_data_ptr[frame_data.texture_offset];
-        texture_data_sz  = frame_data.texture_sz;
       }
+      points_sz       = frame_data.vertices_sz;
+      normals_sz      = frame_data.normals_sz;
+      texture_data_sz = frame_data.texture_sz;
     }
   } // endblock get data pointers.
 
@@ -529,7 +530,7 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
   int n_points    = points_sz / ( sizeof( float ) * 3 );
   int n_texcoords = texcoords_sz / ( sizeof( float ) * 2 );
   int n_normals   = normals_sz / ( sizeof( float ) * 3 );
-  // NOTE(Anton) hacked this in so only supporting uint32_t indices for first pass.
+  // NOTE(Anton) hacked this in so only supporting uint16_t indices for now.
   int indices_type = 1;                               // 1 is uint16_t.
   int n_indices    = indices_sz / sizeof( uint16_t ); // NOTE(Anton) change if type changes!!!
   if ( !_write_mesh_to_obj_file(                      //
@@ -632,7 +633,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to free geometry info\n" );
       return false;
     }
-  }                   // endblock mesh processing.
+  } // endblock mesh processing.
 
   if ( use_vol_av ) { // Video Processing.
     if ( !vol_av_open( _input_video_filename, &_av_info ) ) {
@@ -673,7 +674,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
         return false; // Make sure we stop the processing at this point rather than carry on.
       }
-    }                 // endfor.
+    } // endfor.
 
     if ( !vol_av_close( &_av_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to close video info\n" );
@@ -737,7 +738,7 @@ int main( int argc, char** argv ) {
   strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
 
   bool has_first_arg_path = my_argc > 1 && '-' != argv[1][0];
-  bool got_inputs = false;
+  bool got_inputs         = false;
 
   // Check for drag-and-drop directory.
   if ( has_first_arg_path && _does_dir_exist( argv[1] ) ) {
@@ -765,7 +766,7 @@ int main( int argc, char** argv ) {
     _input_header_filename   = dad_hdr_str;
     _input_sequence_filename = dad_seq_str;
     _input_video_filename    = dad_vid_str;
-    got_inputs = true;
+    got_inputs               = true;
   } else if ( has_first_arg_path ) {
     // Check for drag-and-drop of combined vols file.
     _input_combined_filename = my_argv[1];
@@ -790,14 +791,14 @@ int main( int argc, char** argv ) {
       all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
       if ( _option_arg_indices[CL_COMBINED] ) {
         _input_combined_filename = my_argv[_option_arg_indices[CL_COMBINED] + 1];
-        got_inputs = true;
+        got_inputs               = true;
       } else if ( !got_inputs && !_option_arg_indices[CL_HEADER] && !_option_arg_indices[CL_SEQUENCE] ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --combined is missing. Run with --help for details.\n" );
         return 1;
       }
       if ( _option_arg_indices[CL_HEADER] ) {
         _input_header_filename = my_argv[_option_arg_indices[CL_HEADER] + 1];
-        got_inputs = _option_arg_indices[CL_SEQUENCE] && _option_arg_indices[CL_VIDEO] ? true : got_inputs;
+        got_inputs             = _option_arg_indices[CL_SEQUENCE] && _option_arg_indices[CL_VIDEO] ? true : got_inputs;
       } else if ( !got_inputs ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --header is missing. Run with --help for details.\n" );
         return 1;
@@ -838,14 +839,14 @@ int main( int argc, char** argv ) {
       }
       if ( _option_arg_indices[CL_SEQUENCE] ) {
         _input_sequence_filename = my_argv[_option_arg_indices[CL_SEQUENCE] + 1];
-        got_inputs = _option_arg_indices[CL_HEADER] && _option_arg_indices[CL_VIDEO] ? true : got_inputs;
+        got_inputs               = _option_arg_indices[CL_HEADER] && _option_arg_indices[CL_VIDEO] ? true : got_inputs;
       } else if ( !got_inputs ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --sequence is missing. Run with --help for details.\n" );
         return 1;
       }
       if ( _option_arg_indices[CL_VIDEO] ) {
         _input_video_filename = argv[_option_arg_indices[CL_VIDEO] + 1];
-        got_inputs = _option_arg_indices[CL_HEADER] && _option_arg_indices[CL_SEQUENCE] ? true : got_inputs;
+        got_inputs            = _option_arg_indices[CL_HEADER] && _option_arg_indices[CL_SEQUENCE] ? true : got_inputs;
       } else if ( !got_inputs ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --video is missing. Run with --help for details.\n" );
         return 1;
