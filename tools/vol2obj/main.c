@@ -215,8 +215,8 @@ static int _option_arg_indices[CL_MAX];
  * Registers any valid params found, with their index in argv, in _option_arg_indices.
  * @returns Returns false if anything is out of order, or an unrecognised flag is found.
  */
-static bool _evaluate_params( void ) {
-  for ( int argv_idx = 1; argv_idx < my_argc; argv_idx++ ) {
+static bool _evaluate_params( int start_from_arg_idx ) {
+  for ( int argv_idx = start_from_arg_idx; argv_idx < my_argc; argv_idx++ ) {
     bool found_valid_arg = false;
     // If starts with a '-' check if a known option.
     if ( '-' != my_argv[argv_idx][0] ) {
@@ -736,8 +736,11 @@ int main( int argc, char** argv ) {
   dad_hdr_str[0] = dad_seq_str[0] = dad_vid_str[0] = test_vid_str[0] = '\0';
   strcpy( _prefix_str, "output_frame_" ); // Set the default filename prefix for images.
 
+  bool has_first_arg_path = my_argc > 1 && '-' != argv[1][0];
+  bool got_inputs = false;
+
   // Check for drag-and-drop directory.
-  if ( 2 == argc && _does_dir_exist( argv[1] ) ) {
+  if ( has_first_arg_path && _does_dir_exist( argv[1] ) ) {
     size_t len = strlen( argv[1] );
     strncat( dad_hdr_str, argv[1], MAX_FILENAME_LEN - 1 );
     strncat( dad_seq_str, argv[1], MAX_FILENAME_LEN - 1 );
@@ -762,13 +765,17 @@ int main( int argc, char** argv ) {
     _input_header_filename   = dad_hdr_str;
     _input_sequence_filename = dad_seq_str;
     _input_video_filename    = dad_vid_str;
-  } else if ( 2 == argc ) {
+    got_inputs = true;
+  } else if ( has_first_arg_path ) {
     // Check for drag-and-drop of combined vols file.
     _input_combined_filename = my_argv[1];
     printf( " using -c as %s\n", _input_combined_filename );
-  } else {
+    got_inputs = true;
+  }
+  {
     // Check for command line parameters.
-    if ( !_evaluate_params() ) { return 1; }
+    int start_from_idx = got_inputs ? 2 : 1;
+    if ( !_evaluate_params( start_from_idx ) ) { return 1; }
     { // Register any user-set options.
       if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
         printf(
@@ -783,13 +790,15 @@ int main( int argc, char** argv ) {
       all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
       if ( _option_arg_indices[CL_COMBINED] ) {
         _input_combined_filename = my_argv[_option_arg_indices[CL_COMBINED] + 1];
-      } else if ( !_option_arg_indices[CL_HEADER] && !_option_arg_indices[CL_SEQUENCE] ) {
+        got_inputs = true;
+      } else if ( !got_inputs && !_option_arg_indices[CL_HEADER] && !_option_arg_indices[CL_SEQUENCE] ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --combined is missing. Run with --help for details.\n" );
         return 1;
       }
       if ( _option_arg_indices[CL_HEADER] ) {
         _input_header_filename = my_argv[_option_arg_indices[CL_HEADER] + 1];
-      } else if ( !_option_arg_indices[CL_COMBINED] ) {
+        got_inputs = _option_arg_indices[CL_SEQUENCE] && _option_arg_indices[CL_VIDEO] ? true : got_inputs;
+      } else if ( !got_inputs ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --header is missing. Run with --help for details.\n" );
         return 1;
       }
@@ -829,13 +838,15 @@ int main( int argc, char** argv ) {
       }
       if ( _option_arg_indices[CL_SEQUENCE] ) {
         _input_sequence_filename = my_argv[_option_arg_indices[CL_SEQUENCE] + 1];
-      } else if ( !_option_arg_indices[CL_COMBINED] ) {
+        got_inputs = _option_arg_indices[CL_HEADER] && _option_arg_indices[CL_VIDEO] ? true : got_inputs;
+      } else if ( !got_inputs ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --sequence is missing. Run with --help for details.\n" );
         return 1;
       }
       if ( _option_arg_indices[CL_VIDEO] ) {
         _input_video_filename = argv[_option_arg_indices[CL_VIDEO] + 1];
-      } else if ( !_option_arg_indices[CL_COMBINED] ) {
+        got_inputs = _option_arg_indices[CL_HEADER] && _option_arg_indices[CL_SEQUENCE] ? true : got_inputs;
+      } else if ( !got_inputs ) {
         _printlog( _LOG_TYPE_WARNING, "Required argument --video is missing. Run with --help for details.\n" );
         return 1;
       }
