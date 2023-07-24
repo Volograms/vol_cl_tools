@@ -144,7 +144,7 @@ typedef struct cl_flag_t {
   int n_required_args;   // Number of parameters following that are required.
 } cl_flag_t;
 
-/// Globals for parsing the command line arguments in a function.
+/// Globals for parsing the command line arguments when in a function outside main().
 static int my_argc;
 static char** my_argv;
 
@@ -230,7 +230,6 @@ static bool _evaluate_params( int start_from_arg_idx ) {
       if ( _cl_flags[clo_idx].n_required_args > 0 ) {
         for ( int following_idx = 1; following_idx < _cl_flags[clo_idx].n_required_args + 1; following_idx++ ) {
           if ( argv_idx + _cl_flags[clo_idx].n_required_args >= my_argc || '-' == my_argv[argv_idx + following_idx][0] ) {
-            printf( "argvidx = %i, nargs= %i, argc = %i\n", argv_idx, _cl_flags[clo_idx].n_required_args, my_argc );
             _printlog( _LOG_TYPE_WARNING, "Argument '%s' is not followed by a valid parameter. Run with --help for details.\n", my_argv[argv_idx] );
             return false;
           }
@@ -462,21 +461,47 @@ _wmo2f_fail:
   return false;
 }
 
+typedef struct frame_data_t {
+  float* points_ptr;
+  float* texcoords_ptr;
+  float* normals_ptr;
+  uint8_t* indices_ptr;
+  uint8_t* texture_data_ptr;
+  size_t points_sz;
+  size_t texcoords_sz;
+  size_t normals_sz;
+  size_t indices_sz;
+  size_t texture_data_sz;
+} frame_data_t;
+
 static vol_geom_frame_data_t _key_frame_data;
-static int _prev_key_frame_loadaed_idx = -1;
+static int _prev_key_frame_loaded_idx = -1;
 
 /**
+ * @param seq_filename,combined_filename
+ * Either a sequence filename (older multi-file Volograms), or combined Vologram filename, must point to a valid string.
+ * The other may be NULL.
+ * @param output_mesh_filename
+ * Must not be NULL.
  * @param output_mtl_filename
  * If NULL then no MTL section or link is added to the Obj.
- * @param use_vol_av
+ * @param material_name
+ * String to use as name of the material inside the .obj and corresponding .mtl sections.
+ * @param frame_idx
+ * Frame to use, starting at 0.
+ * @param output_image_filename
  * If true then output_image_filename must not be NULL.
  * @return
  * Returns false on error.
  */
-static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* combined_filename, const char* output_mesh_filename,
-  const char* output_mtl_filename, const char* material_name, int frame_idx, bool use_vol_av, const char* output_image_filename ) {
+static bool _write_geom_frame_to_mesh( //
+  const char* seq_filename,            //
+  const char* combined_filename,       //
+  const char* output_mesh_filename,    //
+  const char* output_mtl_filename,     //
+  const char* material_name,           //
+  int frame_idx ) {
   if ( !( seq_filename || combined_filename ) || !output_mesh_filename || frame_idx < 0 ) { return false; }
-  if ( use_vol_av && !output_image_filename ) { return false; }
 
   const char* filename = combined_filename ? combined_filename : seq_filename;
   bool success         = true;
@@ -488,14 +513,13 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
 
   { // Get data pointers.
     // If our frame isn't a keyframe then we need to load the previous keyframe's data first...
-    //if ( _prev_key_frame_loadaed_idx != key_idx ) {
-      {
-      printf( "loading new key\n" );
+    // if ( _prev_key_frame_loaded_idx != key_idx ) {
+    {
       if ( !vol_geom_read_frame( filename, &_geom_info, key_idx, &_key_frame_data ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
         return false;
       }
-      _prev_key_frame_loadaed_idx = key_idx;
+      _prev_key_frame_loaded_idx = key_idx;
 
       { // TODO fixup/optimise/validate
         if ( key_idx == frame_idx ) {
@@ -505,7 +529,7 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
           normals_ptr = realloc( normals_ptr, normals_sz );
           memcpy( points_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.vertices_offset], points_sz );
           memcpy( normals_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.normals_offset], normals_sz );
-          if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+          if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
             texture_data_sz  = _key_frame_data.texture_sz;
             texture_data_ptr = realloc( texture_data_ptr, texture_data_sz );
             memcpy( texture_data_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.texture_offset], texture_data_sz );
@@ -536,7 +560,7 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
         normals_ptr     = realloc( normals_ptr, normals_sz );
         memcpy( points_ptr, &frame_data.block_data_ptr[frame_data.vertices_offset], points_sz );
         memcpy( normals_ptr, &frame_data.block_data_ptr[frame_data.normals_offset], normals_sz );
-        if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+        if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
           texture_data_ptr = realloc( texture_data_ptr, texture_data_sz );
           memcpy( texture_data_ptr, &frame_data.block_data_ptr[frame_data.texture_offset], texture_data_sz );
         }
@@ -570,16 +594,16 @@ static bool _write_geom_frame_to_mesh( const char* seq_filename, const char* com
   } // endif write mesh.
 
   // And texture. Texture_compression { 0=raw, 1=basis, 2=ktx2 }.
-  if ( !use_vol_av && _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+  if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
     // TODO(Anton) Handle RAW and KTX2.
     int w = 0, h = 0, n = 4;
     int format = 13; // { 13 = cTFRGBA32, 3 = cTFBC3_RGBA }. Defined in basis_transcoder.h.
     if ( !vol_basis_transcode( format, texture_data_ptr, texture_data_sz, _output_blocks_ptr, _dims_presize * _dims_presize * n, &w, &h ) ) {
-      fprintf( stderr, "ERROR transcoding image %i failed\n", frame_idx );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Transcoding image %i failed.\n", frame_idx );
       return false;
     }
     if ( !_write_video_frame_to_image( _output_img_filename, _output_blocks_ptr, w, h, n ) ) {
-      _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write .basis texture frame %i to image file `%s`\n", frame_idx, _output_img_filename );
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write .basis texture frame %i to image file `%s`.\n", frame_idx, _output_img_filename );
       success = false;
     }
   } // endif Texture/Basis.
@@ -642,8 +666,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       } // endswitch.
 
       // And geometry.
-      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i,
-             use_vol_av, _output_img_filename ) ) {
+      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         return false;
       }
@@ -658,7 +681,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to free geometry info\n" );
       return false;
     }
-  } // endblock mesh processing.
+  }                   // endblock mesh processing.
 
   if ( use_vol_av ) { // Video Processing.
     if ( !vol_av_open( _input_video_filename, &_av_info ) ) {
@@ -699,7 +722,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
         return false; // Make sure we stop the processing at this point rather than carry on.
       }
-    } // endfor.
+    }                 // endfor.
 
     if ( !vol_av_close( &_av_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to close video info\n" );
