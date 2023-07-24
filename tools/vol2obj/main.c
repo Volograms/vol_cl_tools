@@ -85,68 +85,7 @@
 #define MAX_FILENAME_LEN 4096
 #define MAX_SUBPATH_LEN 1024
 
-/** Colour formatting of printfs for status messages. */
-static const char* STRC_DEFAULT = "\x1B[0m";
-static const char* STRC_RED     = "\x1B[31m";
-static const char* STRC_GREEN   = "\x1B[32m";
-static const char* STRC_YELLOW  = "\x1B[33m";
-
-static const int _dims_presize = 2048;
-static uint8_t* _output_blocks_ptr;
-
-static bool _bytes_free_on_disk( const char* path_str, uint64_t* free_sz_ptr, uint64_t* total_sz_ptr ) {
-  if ( !free_sz_ptr || !total_sz_ptr ) { return false; }
-#if defined( _WIN32 ) || defined( _WIN64 )
-  uint64_t free_byte_to_caller = 0, total_bytes = 0, free_bytes = 0;
-  if ( !GetDiskFreeSpaceEx( path_str, (PULARGE_INTEGER)&free_byte_to_caller, (PULARGE_INTEGER)&total_bytes, (PULARGE_INTEGER)&free_bytes ) ) { return false; }
-  *free_sz_ptr  = free_byte_to_caller;
-  *total_sz_ptr = total_bytes;
-#else
-  struct statvfs buf;
-  if ( -1 == statvfs( path_str, &buf ) ) { return false; }
-  *free_sz_ptr  = (uint64_t)buf.f_bavail * (uint64_t)buf.f_frsize;
-  *total_sz_ptr = (uint64_t)buf.f_blocks * (uint64_t)buf.f_frsize;
-#endif
-  return true;
-}
-
 typedef enum _log_type { _LOG_TYPE_INFO = 0, _LOG_TYPE_DEBUG, _LOG_TYPE_WARNING, _LOG_TYPE_ERROR, _LOG_TYPE_SUCCESS } _log_type;
-
-static void _printlog( _log_type log_type, const char* message_str, ... ) {
-  FILE* stream_ptr = stdout;
-  if ( _LOG_TYPE_ERROR == log_type ) {
-    stream_ptr = stderr;
-    fprintf( stderr, "%s", STRC_RED );
-  } else if ( _LOG_TYPE_WARNING == log_type ) {
-    stream_ptr = stderr;
-    fprintf( stderr, "%s", STRC_YELLOW );
-  } else if ( _LOG_TYPE_SUCCESS == log_type ) {
-    fprintf( stderr, "%s", STRC_GREEN );
-  }
-  va_list arg_ptr;
-  va_start( arg_ptr, message_str );
-  vfprintf( stream_ptr, message_str, arg_ptr );
-  va_end( arg_ptr );
-  fprintf( stream_ptr, "%s", STRC_DEFAULT );
-}
-
-typedef enum img_fmt_t {
-  IMG_FMT_PPM = 0, // homemade
-  IMG_FMT_JPG,     // uses library
-  IMG_FMT_MAX      // just for counting # image formats
-} img_fmt_t;
-
-/** Command-line flags. */
-typedef struct cl_flag_t {
-  const char* long_str;  // e.g. "--header"
-  const char* short_str; // e.g. "-h"
-  const char* help_str;  // e.g. "Required for multi-file volograms. The next argument gives the path to the header.vols file.\n"
-  int n_required_args;   // Number of parameters following that are required.
-} cl_flag_t;
-
-/// Globals for parsing the command line arguments when in a function outside main().
-static int my_argc;
-static char** my_argv;
 
 /** Convience enum to index into the array of command-line flags by readable name. */
 typedef enum cl_flag_enum_t {
@@ -162,6 +101,20 @@ typedef enum cl_flag_enum_t {
   CL_VIDEO,
   CL_MAX
 } cl_flag_enum_t;
+
+/** Command-line flags. */
+typedef struct cl_flag_t {
+  const char* long_str;  // e.g. "--header"
+  const char* short_str; // e.g. "-h"
+  const char* help_str;  // e.g. "Required for multi-file volograms. The next argument gives the path to the header.vols file.\n"
+  int n_required_args;   // Number of parameters following that are required.
+} cl_flag_t;
+
+/** Colour formatting of printfs for status messages. */
+static const char* STRC_DEFAULT = "\x1B[0m";
+static const char* STRC_RED     = "\x1B[31m";
+static const char* STRC_GREEN   = "\x1B[32m";
+static const char* STRC_YELLOW  = "\x1B[33m";
 
 /** All command line flags are specified here. Note that this order must correspond to the ordering in cl_flag_enum_t. */
 static cl_flag_t _cl_flags[CL_MAX] = {
@@ -190,6 +143,73 @@ static cl_flag_t _cl_flags[CL_MAX] = {
   { "--video", "-v", "Required for multi-file volograms. The next argument gives the path to the video texture file.\n", 1 }       // CL_VIDEO
 };
 
+/// Globals for parsing the command line arguments when in a function outside main().
+static int my_argc;
+static char** my_argv;
+/** If command-line options are valid, their index in argv is stored here, otherwise it is 0. */
+static int _option_arg_indices[CL_MAX];
+
+// Filenames.
+static char* _input_header_filename;                 // e.g. `header.vols`
+static char* _input_sequence_filename;               // e.g. `sequence.vols`
+static char* _input_combined_filename;               // e.g. `combined.vols`
+static char* _input_video_filename;                  // e.g. `texture_1024.webm`
+static char _output_dir_path[MAX_SUBPATH_LEN];       // e.g. `my_output/`
+static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000000.obj`
+static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
+static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
+static char _material_name[MAX_SUBPATH_LEN];         // e.g. `volograms_mtl_00000000`
+static char _prefix_str[MAX_SUBPATH_LEN];            // defaults to `output_frame_`
+
+static vol_av_video_t _av_info;                      // Audio-video information from vol_av library.
+static vol_geom_info_t _geom_info;                   // Mesh information from vol_geom library.
+
+// stb_image_write.
+static int _jpeg_quality = 95; // Arbitrary choice of 95% quality v size based on GIMP's default.
+
+// Basis Universal.
+static const int _dims_presize = 8192; // Maximum texture size for Basis Universal transcoding.
+static uint8_t* _output_blocks_ptr;    // Temporary memory used to gather Basis Universal output.
+
+// Working memory.
+static uint8_t* _key_blob_ptr; // For retaining memory of most recent key frame for re-use.
+static vol_geom_frame_data_t _key_frame_data;
+static int _prev_key_frame_loaded_idx = -1;
+
+static void _printlog( _log_type log_type, const char* message_str, ... ) {
+  FILE* stream_ptr = stdout;
+  if ( _LOG_TYPE_ERROR == log_type ) {
+    stream_ptr = stderr;
+    fprintf( stderr, "%s", STRC_RED );
+  } else if ( _LOG_TYPE_WARNING == log_type ) {
+    stream_ptr = stderr;
+    fprintf( stderr, "%s", STRC_YELLOW );
+  } else if ( _LOG_TYPE_SUCCESS == log_type ) {
+    fprintf( stderr, "%s", STRC_GREEN );
+  }
+  va_list arg_ptr;
+  va_start( arg_ptr, message_str );
+  vfprintf( stream_ptr, message_str, arg_ptr );
+  va_end( arg_ptr );
+  fprintf( stream_ptr, "%s", STRC_DEFAULT );
+}
+
+static bool _bytes_free_on_disk( const char* path_str, uint64_t* free_sz_ptr, uint64_t* total_sz_ptr ) {
+  if ( !free_sz_ptr || !total_sz_ptr ) { return false; }
+#if defined( _WIN32 ) || defined( _WIN64 )
+  uint64_t free_byte_to_caller = 0, total_bytes = 0, free_bytes = 0;
+  if ( !GetDiskFreeSpaceEx( path_str, (PULARGE_INTEGER)&free_byte_to_caller, (PULARGE_INTEGER)&total_bytes, (PULARGE_INTEGER)&free_bytes ) ) { return false; }
+  *free_sz_ptr  = free_byte_to_caller;
+  *total_sz_ptr = total_bytes;
+#else
+  struct statvfs buf;
+  if ( -1 == statvfs( path_str, &buf ) ) { return false; }
+  *free_sz_ptr  = (uint64_t)buf.f_bavail * (uint64_t)buf.f_frsize;
+  *total_sz_ptr = (uint64_t)buf.f_blocks * (uint64_t)buf.f_frsize;
+#endif
+  return true;
+}
+
 /** Used to print all the options in the command line flags struct for the help text. */
 static void _print_cl_flags( void ) {
   printf( "Options:\n" );
@@ -207,9 +227,6 @@ static bool _check_cl_option( int argv_idx, const char* long_str, const char* sh
   if ( short_str && ( 0 == strcasecmp( short_str, my_argv[argv_idx] ) ) ) { return true; }
   return false;
 }
-
-/** If command-line options are valid, their index in argv is stored here, otherwise it is 0. */
-static int _option_arg_indices[CL_MAX];
 
 /** Loop over all the command line arguments and make sure they all have the right bits with them and there are not unknowns.
  * Registers any valid params found, with their index in argv, in _option_arg_indices.
@@ -249,37 +266,6 @@ static bool _evaluate_params( int start_from_arg_idx ) {
   return true;
 }
 
-static img_fmt_t _img_fmt = IMG_FMT_JPG;             // Image format to use for output.
-static int _jpeg_quality  = 95;                      // Arbitrary choice of 95% quality v size based on GIMP's default.
-static vol_av_video_t _av_info;                      // Audio-video information from vol_av library.
-static vol_geom_info_t _geom_info;                   // Mesh information from vol_geom library.
-static char* _input_header_filename;                 // e.g. `header.vols`
-static char* _input_sequence_filename;               // e.g. `sequence.vols`
-static char* _input_combined_filename;               // e.g. `combined.vols`
-static char* _input_video_filename;                  // e.g. `texture_1024.webm`
-static char _output_dir_path[MAX_SUBPATH_LEN];       // e.g. `my_output/`
-static char _output_mesh_filename[MAX_FILENAME_LEN]; // e.g. `output_frame_00000000.obj`
-static char _output_mtl_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.mtl`
-static char _output_img_filename[MAX_FILENAME_LEN];  // e.g. `output_frame_00000000.jpg`
-static char _material_name[MAX_SUBPATH_LEN];         // e.g. `volograms_mtl_00000000`
-static char _prefix_str[MAX_SUBPATH_LEN];            // defaults to `output_frame_`
-
-/// A homemade P3 ASCII PPM image writer. These images are very large, so only useful for debugging purposes.
-static bool _write_rgb_image_to_ppm( const char* filename, const uint8_t* image_ptr, int w, int h ) {
-  FILE* f_ptr = fopen( filename, "w" );
-  if ( !f_ptr ) { return false; }
-  fprintf( f_ptr, "P3\n%i %i\n255\n", w, h );
-  for ( int y = 0; y < h; y++ ) {
-    for ( int x = 0; x < w; x++ ) {
-      int idx = ( y * w + x ) * 3;
-      fprintf( f_ptr, "%i %i %i ", image_ptr[idx + 0], image_ptr[idx + 1], image_ptr[idx + 2] );
-    }
-    fprintf( f_ptr, "\n" );
-  }
-  fclose( f_ptr );
-  return true;
-}
-
 /** Writes the latest pixel buffer into a file in the appropriate format.
  * @param w,h,n Height and width of image, and number of colours channels, respectively.
  */
@@ -290,7 +276,7 @@ static bool _write_video_frame_to_image( const char* output_image_filename, cons
     uint64_t avail_bytes = 0, total_bytes = 0;
     const char* ptr = NULL;
     if ( _output_dir_path[0] != '\0' ) { ptr = _output_dir_path; }
-    if ( !ptr ) { ptr = "."; } // POSIX doesn't like NULL. TODO(Anton) check on Windows.
+    if ( !ptr ) { ptr = "."; }
     if ( !_bytes_free_on_disk( ptr, &avail_bytes, &total_bytes ) ) {
       _printlog( _LOG_TYPE_WARNING, "WARNING: Could not retrieve bytes available on disk for path `%s`.\n", ptr );
     } else {
@@ -307,24 +293,10 @@ static bool _write_video_frame_to_image( const char* output_image_filename, cons
   char full_path[MAX_FILENAME_LEN];
   sprintf( full_path, "%s%s", _output_dir_path, output_image_filename );
 
-  switch ( _img_fmt ) {
-  case IMG_FMT_PPM: {
-    if ( !_write_rgb_image_to_ppm( full_path, pixels_ptr, w, h ) ) {
-      _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
-      return false;
-    }
-  } break;
-  case IMG_FMT_JPG: {
-    if ( !stbi_write_jpg( full_path, w, h, n, pixels_ptr, _jpeg_quality ) ) {
-      _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
-      return false;
-    }
-  } break;
-  default: {
-    _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" );
+  if ( !stbi_write_jpg( full_path, w, h, n, pixels_ptr, _jpeg_quality ) ) {
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Writing frame image file `%s`.\n", full_path );
     return false;
-  } break;
-  } // endswitch
+  }
 
   _printlog( _LOG_TYPE_INFO, "Wrote image file `%s`\n", full_path );
 
@@ -460,22 +432,6 @@ _wmo2f_fail:
   _printlog( _LOG_TYPE_ERROR, "ERROR: Could not write mesh file `%s`.\n", full_path );
   return false;
 }
-
-typedef struct frame_data_t {
-  float* points_ptr;
-  float* texcoords_ptr;
-  float* normals_ptr;
-  uint8_t* indices_ptr;
-  uint8_t* texture_data_ptr;
-  size_t points_sz;
-  size_t texcoords_sz;
-  size_t normals_sz;
-  size_t indices_sz;
-  size_t texture_data_sz;
-} frame_data_t;
-
-static vol_geom_frame_data_t _key_frame_data;
-static int _prev_key_frame_loaded_idx = -1;
 
 /**
  * @param seq_filename,combined_filename
@@ -627,16 +583,24 @@ static bool _write_geom_frame_to_mesh( //
  */
 static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames ) {
   bool use_vol_av = false;
-  { // Mesh and video processing.
+
+  // Mesh processing.
+  {
+    bool streaming_mode = true; // File access on every frame but consumes less memory.
     if ( _input_combined_filename ) {
       if ( !vol_geom_create_file_info_from_file( _input_combined_filename, &_geom_info ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open combined vologram file=%s. Check for file mismatches.\n", _input_combined_filename );
-        return false;
+        goto _pv_fail;
       }
-    } else if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, true ) ) {
+    } else if ( !vol_geom_create_file_info( _input_header_filename, _input_sequence_filename, &_geom_info, streaming_mode ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open geometry files header=%s sequence=%s. Check for header and sequenece file mismatches.\n",
         _input_header_filename, _input_sequence_filename );
-      return false;
+      goto _pv_fail;
+    }
+    _key_blob_ptr = calloc( 1, _geom_info.biggest_frame_blob_sz );
+    if ( !_key_blob_ptr ) {
+      _printlog( _LOG_TYPE_ERROR, "ERROR: Allocating memory for maximally-sized frame blob.\n" );
+      goto _pv_fail;
     }
 
     if ( _geom_info.hdr.version < 13 ) {
@@ -644,14 +608,14 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
     } else {
       if ( !vol_basis_init() ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to initialise Basis transcoder.\n" );
-        return false;
+        goto _pv_fail;
       }
     }
 
     int n_frames = _geom_info.hdr.frame_count;
     if ( first_frame_idx >= n_frames ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Frame %i is not in range of geometry's %i frames\n", first_frame_idx, n_frames );
-      return false;
+      goto _pv_fail;
     }
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
 
@@ -659,40 +623,37 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       sprintf( _output_mesh_filename, "%s%08i.obj", _prefix_str, i );
       sprintf( _output_mtl_filename, "%s%08i.mtl", _prefix_str, i );
       sprintf( _material_name, "vol_mtl_%08i", i );
-      switch ( _img_fmt ) {
-      case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
-      case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
-      default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
-      } // endswitch.
+      sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i );
 
       // And geometry.
       if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
-        return false;
+        goto _pv_fail;
       }
       // Material file.
       if ( !_write_mtl_file( _output_mtl_filename, _material_name, _output_img_filename ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write material file for frame %i\n", i );
-        return false;
+        goto _pv_fail;
       }
     } // endfor frames.
 
     if ( !vol_geom_free_file_info( &_geom_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to free geometry info\n" );
-      return false;
+      goto _pv_fail;
     }
-  }                   // endblock mesh processing.
+  } // endblock mesh processing.
 
-  if ( use_vol_av ) { // Video Processing.
+  // Video Processing.
+  if ( use_vol_av ) {
     if ( !vol_av_open( _input_video_filename, &_av_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open video file %s.\n", _input_video_filename );
-      return false;
+      goto _pv_fail;
     }
     int n_frames = (int)vol_av_frame_count( &_av_info );
 
     if ( first_frame_idx >= n_frames ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Frame %i is not in range of video's %i frames\n", first_frame_idx, n_frames );
-      return false;
+      goto _pv_fail;
     }
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
 
@@ -700,7 +661,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
     for ( int i = 0; i < first_frame_idx; i++ ) {
       if ( !vol_av_read_next_frame( &_av_info ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
-        return false;
+        goto _pv_fail;
       }
     }
 
@@ -709,28 +670,30 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       if ( use_vol_av ) {
         if ( !vol_av_read_next_frame( &_av_info ) ) {
           _printlog( _LOG_TYPE_ERROR, "ERROR: Reading frames from video sequence.\n" );
-          return false;
+          goto _pv_fail;
         }
       }
 
-      switch ( _img_fmt ) {
-      case IMG_FMT_PPM: sprintf( _output_img_filename, "%s%08i.ppm", _prefix_str, i ); break;
-      case IMG_FMT_JPG: sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i ); break;
-      default: _printlog( _LOG_TYPE_ERROR, "ERROR: No valid image format selected\n" ); return false;
-      } // endswitch.
+      sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i );
+
       if ( !_write_video_frame_to_image( _output_img_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h, 3 ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
-        return false; // Make sure we stop the processing at this point rather than carry on.
+        goto _pv_fail; // Make sure we stop the processing at this point rather than carry on.
       }
-    }                 // endfor.
+    }                  // endfor.
 
     if ( !vol_av_close( &_av_info ) ) {
       _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to close video info\n" );
-      return false;
+      goto _pv_fail;
     }
   } // endblock Video Processing.
 
+  if ( _key_blob_ptr ) { free( _key_blob_ptr ); }
   return true;
+
+_pv_fail:
+  if ( _key_blob_ptr ) { free( _key_blob_ptr ); }
+  return false;
 }
 
 static bool _does_dir_exist( const char* dir_path ) {
