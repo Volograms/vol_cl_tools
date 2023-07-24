@@ -267,7 +267,8 @@ static bool _evaluate_params( int start_from_arg_idx ) {
 }
 
 /** Writes the latest pixel buffer into a file in the appropriate format.
- * @param w,h,n Height and width of image, and number of colours channels, respectively.
+ * @param w,h,n
+ * Height and width of image, and number of colours channels, respectively.
  */
 static bool _write_video_frame_to_image( const char* output_image_filename, const uint8_t* pixels_ptr, int w, int h, int n ) {
   if ( !output_image_filename || !pixels_ptr || w <= 0 || h <= 0 ) { return false; }
@@ -347,7 +348,8 @@ the map_Kd value is multiplied by the Kd value.
 }
 
 /**
- * @param output_mtl_filename If NULL then no MTL section or link is added to the Obj.
+ * @param output_mtl_filename
+ * If NULL then no MTL section or link is added to the Obj.
  */
 static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const char* output_mtl_filename, const char* material_name, const float* vertices_ptr,
   uint32_t n_vertices, const float* texcoords_ptr, uint32_t n_texcoords, const float* normals_ptr, uint32_t n_normals, const void* indices_ptr,
@@ -466,61 +468,44 @@ static bool _write_geom_frame_to_mesh( //
   float *points_ptr = NULL, *texcoords_ptr = NULL, *normals_ptr = NULL;
   uint8_t *indices_ptr = NULL, *texture_data_ptr = NULL;
   uint32_t points_sz = 0, texcoords_sz = 0, normals_sz = 0, indices_sz = 0, texture_data_sz = 0;
+  vol_geom_frame_data_t frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
 
   { // Get data pointers.
-    // If our frame isn't a keyframe then we need to load the previous keyframe's data first...
-    // if ( _prev_key_frame_loaded_idx != key_idx ) {
-    {
+    // If our frame isn't a keyframe then we need to load the previous keyframe's data first.
+    if ( _prev_key_frame_loaded_idx != key_idx ) {
       if ( !vol_geom_read_frame( filename, &_geom_info, key_idx, &_key_frame_data ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
         return false;
       }
+      frame_data = _key_frame_data;
+      assert( _key_frame_data.block_data_sz <= _geom_info.biggest_frame_blob_sz && "Frame was bigger than pre-allocated biggest blob size." );
+      memcpy( _key_blob_ptr, _key_frame_data.block_data_ptr, _key_frame_data.block_data_sz );
       _prev_key_frame_loaded_idx = key_idx;
-
-      { // TODO fixup/optimise/validate
-        if ( key_idx == frame_idx ) {
-          points_sz   = _key_frame_data.vertices_sz;
-          normals_sz  = _key_frame_data.normals_sz;
-          points_ptr  = realloc( points_ptr, points_sz );
-          normals_ptr = realloc( normals_ptr, normals_sz );
-          memcpy( points_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.vertices_offset], points_sz );
-          memcpy( normals_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.normals_offset], normals_sz );
-          if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-            texture_data_sz  = _key_frame_data.texture_sz;
-            texture_data_ptr = realloc( texture_data_ptr, texture_data_sz );
-            memcpy( texture_data_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.texture_offset], texture_data_sz );
-          }
-        }
-        texcoords_sz  = _key_frame_data.uvs_sz;
-        indices_sz    = _key_frame_data.indices_sz;
-        texcoords_ptr = realloc( texcoords_ptr, texcoords_sz );
-        indices_ptr   = realloc( indices_ptr, indices_sz );
-        memcpy( texcoords_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.uvs_offset], texcoords_sz );
-        memcpy( indices_ptr, &_key_frame_data.block_data_ptr[_key_frame_data.indices_offset], indices_sz );
-      }
     }
+    // Data that always comes from the frame's keyframe.
+    texcoords_sz  = _key_frame_data.uvs_sz;
+    indices_sz    = _key_frame_data.indices_sz;
+    texcoords_ptr = (float*)&_key_blob_ptr[_key_frame_data.uvs_offset];
+    indices_ptr   = &_key_blob_ptr[_key_frame_data.indices_offset];
 
-    // ...and then add our frame's subset of the data second.
+    uint8_t* frame_ptr = _key_blob_ptr;
+    // Read intermediate frame if necessary.
     if ( key_idx != frame_idx ) {
-      vol_geom_frame_data_t frame_data = ( vol_geom_frame_data_t ){ .block_data_sz = 0 };
-      // Read the non-keyframe (careful with mem leaks).
       if ( !vol_geom_read_frame( filename, &_geom_info, frame_idx, &frame_data ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", frame_idx );
         return false;
       }
-      { // TODO fixup/optimise/validate
-        points_sz       = frame_data.vertices_sz;
-        normals_sz      = frame_data.normals_sz;
-        texture_data_sz = frame_data.texture_sz;
-        points_ptr      = realloc( points_ptr, points_sz );
-        normals_ptr     = realloc( normals_ptr, normals_sz );
-        memcpy( points_ptr, &frame_data.block_data_ptr[frame_data.vertices_offset], points_sz );
-        memcpy( normals_ptr, &frame_data.block_data_ptr[frame_data.normals_offset], normals_sz );
-        if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-          texture_data_ptr = realloc( texture_data_ptr, texture_data_sz );
-          memcpy( texture_data_ptr, &frame_data.block_data_ptr[frame_data.texture_offset], texture_data_sz );
-        }
-      }
+      frame_ptr = frame_data.block_data_ptr;
+    }
+
+    // Data that comes from current frame (which may be a keyframe).
+    points_sz   = frame_data.vertices_sz;
+    normals_sz  = frame_data.normals_sz;
+    points_ptr  = (float*)&frame_ptr[frame_data.vertices_offset];
+    normals_ptr = (float*)&frame_ptr[frame_data.normals_offset];
+    if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
+      texture_data_sz  = frame_data.texture_sz;
+      texture_data_ptr = &frame_ptr[frame_data.texture_offset];
     }
   } // endblock get data pointers.
 
@@ -551,7 +536,7 @@ static bool _write_geom_frame_to_mesh( //
 
   // And texture. Texture_compression { 0=raw, 1=basis, 2=ktx2 }.
   if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
-    // TODO(Anton) Handle RAW and KTX2.
+    // TODO Handle RAW and KTX2.
     int w = 0, h = 0, n = 4;
     int format = 13; // { 13 = cTFRGBA32, 3 = cTFBC3_RGBA }. Defined in basis_transcoder.h.
     if ( !vol_basis_transcode( format, texture_data_ptr, texture_data_sz, _output_blocks_ptr, _dims_presize * _dims_presize * n, &w, &h ) ) {
@@ -563,14 +548,6 @@ static bool _write_geom_frame_to_mesh( //
       success = false;
     }
   } // endif Texture/Basis.
-
-  { // TODO opt
-    if ( points_ptr ) { free( points_ptr ); }
-    if ( normals_ptr ) { free( normals_ptr ); }
-    if ( texcoords_ptr ) { free( texcoords_ptr ); }
-    if ( indices_ptr ) { free( indices_ptr ); }
-    if ( texture_data_ptr ) { free( texture_data_ptr ); }
-  }
   return success;
 }
 
