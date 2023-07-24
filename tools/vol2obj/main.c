@@ -95,6 +95,7 @@ typedef enum cl_flag_enum_t {
   CL_HELP,
   CL_FIRST,
   CL_LAST,
+  CL_NO_NORMALS,
   CL_OUTPUT_DIR,
   CL_PREFIX,
   CL_SEQUENCE,
@@ -131,6 +132,7 @@ static cl_flag_t _cl_flags[CL_MAX] = {
     "The next argument gives the frame number of the last frame to process.\n"                                                     //
     "Can be used with -f to process a range of frames from first to last, inclusive.\n",                                           //
     1 },                                                                                                                           //
+  { "--no-normals", "-n", "Strip normals from the mesh before exporting.\n", 0 },                                                  // CL_NO_NORMALS
   { "--output-dir", "-o",                                                                                                          // CL_OUTPUT_DIR
     "The next argument gives the path to a directory to write output files into.\n"                                                //
     "Default is the current working directory.\n",                                                                                 //
@@ -266,6 +268,40 @@ static bool _evaluate_params( int start_from_arg_idx ) {
   return true;
 }
 
+static bool _does_dir_exist( const char* dir_path ) {
+#if defined( _WIN32 ) || defined( _WIN64 )
+  DWORD attribs = GetFileAttributes( dir_path );
+  return ( attribs != INVALID_FILE_ATTRIBUTES && ( attribs & FILE_ATTRIBUTE_DIRECTORY ) );
+#else
+  DIR* dir      = opendir( dir_path );
+  if ( dir ) {
+    closedir( dir );
+    return true;
+  }
+  return false;
+#endif
+}
+
+static bool _make_dir( const char* dir_path ) {
+#if defined( _WIN32 ) || defined( _WIN64 )
+  if ( 0 == _mkdir( dir_path ) ) {
+    _printlog( _LOG_TYPE_INFO, "Created directory `%s`\n", dir_path );
+    return true;
+  }
+#else
+  if ( 0 == mkdir( dir_path, S_IRWXU ) ) { // Read-Write-eXecute permissions
+    _printlog( _LOG_TYPE_INFO, "Created directory `%s`\n", dir_path );
+    return true;
+  }
+#endif
+  _printlog( _LOG_TYPE_ERROR, "ERROR: Creating directory `%s`\n", dir_path );
+  return false;
+}
+
+/// Default string names for Volu video texture files.
+#define VOL_VID_STR_2048 "texture_2048_h264.mp4"
+#define VOL_VID_STR_1024 "texture_1024_h264.mp4"
+
 /** Writes the latest pixel buffer into a file in the appropriate format.
  * @param w,h,n
  * Height and width of image, and number of colours channels, respectively.
@@ -351,9 +387,20 @@ the map_Kd value is multiplied by the Kd value.
  * @param output_mtl_filename
  * If NULL then no MTL section or link is added to the Obj.
  */
-static bool _write_mesh_to_obj_file( const char* output_mesh_filename, const char* output_mtl_filename, const char* material_name, const float* vertices_ptr,
-  uint32_t n_vertices, const float* texcoords_ptr, uint32_t n_texcoords, const float* normals_ptr, uint32_t n_normals, const void* indices_ptr,
-  uint32_t n_indices, int index_type ) {
+static bool _write_mesh_to_obj_file( //
+  const char* output_mesh_filename,  //
+  const char* output_mtl_filename,   //
+  const char* material_name,         //
+  const float* vertices_ptr,         //
+  uint32_t n_vertices,               //
+  const float* texcoords_ptr,        //
+  uint32_t n_texcoords,              //
+  const float* normals_ptr,          //
+  uint32_t n_normals,                //
+  const void* indices_ptr,           //
+  uint32_t n_indices,                //
+  int index_type                     //
+) {
   if ( !output_mesh_filename ) { return false; }
 
   char full_path[MAX_FILENAME_LEN];
@@ -449,6 +496,8 @@ _wmo2f_fail:
  * Frame to use, starting at 0.
  * @param output_image_filename
  * If true then output_image_filename must not be NULL.
+ * @param no_normals
+ * If true then don't include vertex normals in the output.
  * @return
  * Returns false on error.
  */
@@ -458,7 +507,9 @@ static bool _write_geom_frame_to_mesh( //
   const char* output_mesh_filename,    //
   const char* output_mtl_filename,     //
   const char* material_name,           //
-  int frame_idx ) {
+  int frame_idx,
+  bool no_normals                      //
+) {
   if ( !( seq_filename || combined_filename ) || !output_mesh_filename || frame_idx < 0 ) { return false; }
 
   const char* filename = combined_filename ? combined_filename : seq_filename;
@@ -502,7 +553,7 @@ static bool _write_geom_frame_to_mesh( //
     points_sz   = frame_data.vertices_sz;
     normals_sz  = frame_data.normals_sz;
     points_ptr  = (float*)&frame_ptr[frame_data.vertices_offset];
-    normals_ptr = (float*)&frame_ptr[frame_data.normals_offset];
+    normals_ptr = no_normals ? NULL : (float*)&frame_ptr[frame_data.normals_offset];
     if ( _geom_info.hdr.textured && _geom_info.hdr.texture_compression > 0 ) {
       texture_data_sz  = frame_data.texture_sz;
       texture_data_ptr = &frame_ptr[frame_data.texture_offset];
@@ -512,10 +563,10 @@ static bool _write_geom_frame_to_mesh( //
   // Write the .obj.
   uint32_t n_points    = points_sz / ( sizeof( float ) * 3 );
   uint32_t n_texcoords = texcoords_sz / ( sizeof( float ) * 2 );
-  uint32_t n_normals   = normals_sz / ( sizeof( float ) * 3 );
+  uint32_t n_normals   = no_normals ? 0 : normals_sz / ( sizeof( float ) * 3 );
   // NOTE(Anton) hacked this in so only supporting uint16_t indices for now.
   int indices_type   = 1;                               // 1 is uint16_t.
-  uint32_t n_indices = indices_sz / sizeof( uint16_t ); // NOTE(Anton) change if type changes!!!
+  uint32_t n_indices = indices_sz / sizeof( uint16_t ); // NOTE change if type changes!!!
   if ( !_write_mesh_to_obj_file(                        //
          output_mesh_filename,                          //
          output_mtl_filename,                           //
@@ -558,7 +609,7 @@ static bool _write_geom_frame_to_mesh( //
  * @return
  * Returns false on error.
  */
-static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames ) {
+static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames, bool no_normals ) {
   bool use_vol_av = false;
 
   // Mesh processing.
@@ -603,7 +654,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i );
 
       // And geometry.
-      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i ) ) {
+      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i, no_normals ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         goto _pv_fail;
       }
@@ -673,46 +724,13 @@ _pv_fail:
   return false;
 }
 
-static bool _does_dir_exist( const char* dir_path ) {
-#if defined( _WIN32 ) || defined( _WIN64 )
-  DWORD attribs = GetFileAttributes( dir_path );
-  return ( attribs != INVALID_FILE_ATTRIBUTES && ( attribs & FILE_ATTRIBUTE_DIRECTORY ) );
-#else
-  DIR* dir      = opendir( dir_path );
-  if ( dir ) {
-    closedir( dir );
-    return true;
-  }
-  return false;
-#endif
-}
-
-static bool _make_dir( const char* dir_path ) {
-#if defined( _WIN32 ) || defined( _WIN64 )
-  if ( 0 == _mkdir( dir_path ) ) {
-    _printlog( _LOG_TYPE_INFO, "Created directory `%s`\n", dir_path );
-    return true;
-  }
-#else
-  if ( 0 == mkdir( dir_path, S_IRWXU ) ) { // Read-Write-eXecute permissions
-    _printlog( _LOG_TYPE_INFO, "Created directory `%s`\n", dir_path );
-    return true;
-  }
-#endif
-  _printlog( _LOG_TYPE_ERROR, "ERROR: Creating directory `%s`\n", dir_path );
-  return false;
-}
-
-/// Default string names for Volu video texture files.
-#define VOL_VID_STR_2048 "texture_2048_h264.mp4"
-#define VOL_VID_STR_1024 "texture_1024_h264.mp4"
-
 int main( int argc, char** argv ) {
   // Paths for drag-and-drop directory.
   char dad_hdr_str[MAX_FILENAME_LEN], dad_seq_str[MAX_FILENAME_LEN], dad_vid_str[MAX_FILENAME_LEN], test_vid_str[MAX_FILENAME_LEN];
   int first_frame = 0;
   int last_frame  = 0;
   bool all_frames = false;
+  bool no_normals = false;
 
   _output_blocks_ptr = (uint8_t*)malloc( _dims_presize * _dims_presize * 4 );
   if ( !_output_blocks_ptr ) {
@@ -777,6 +795,7 @@ int main( int argc, char** argv ) {
         return 0;
       }
       all_frames = _option_arg_indices[CL_ALL_FRAMES] > 0;
+      no_normals = _option_arg_indices[CL_NO_NORMALS] > 0;
       if ( _option_arg_indices[CL_COMBINED] ) {
         _input_combined_filename = my_argv[_option_arg_indices[CL_COMBINED] + 1];
         got_inputs               = true;
@@ -851,7 +870,7 @@ int main( int argc, char** argv ) {
       _input_header_filename, _input_sequence_filename, _input_video_filename );
   }
 
-  if ( !_process_vologram( first_frame, last_frame, all_frames ) ) { return 1; }
+  if ( !_process_vologram( first_frame, last_frame, all_frames, no_normals ) ) { return 1; }
 
   _printlog( _LOG_TYPE_SUCCESS, "Vologram processing completed.\n" );
 
