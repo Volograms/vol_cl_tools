@@ -143,6 +143,8 @@ There is a more detailed answer at https://apple.stackexchange.com/questions/414
 
 ### Examples
 
+The following examples use Windows `vol2obj.exe`. For Linux/macOS substitute `./vol2obj.bin`.
+
 * Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
 
 ```
