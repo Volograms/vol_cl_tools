@@ -68,7 +68,7 @@ You can import or drag-and-drop this into most 3D software and 3D game engines.
 ### Tips
 
 * Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the `.obj` file.
-* For more details on extracting frames with *vol2obj* see the [vol2obj Parameters](#vol2obj-parameters) section.
+* For more details on parameters to help extracting frames with *vol2obj* run `--help` from the command line.
 * To avoid mixing up files between captures:
   * Create a new output directory using `--output_dir` for each capture you process.
   * You can add a `--prefix` to change `output_frame_` to some more specific file text.
@@ -141,59 +141,6 @@ export LIBRARY_PATH=/opt/homebrew/lib
 
 There is a more detailed answer at https://apple.stackexchange.com/questions/414622/installing-a-c-c-library-with-homebrew-on-m1-macs
 
-## vol2obj Parameters
-
-Volograms are multi-frame 3D animations that are currently split into 3 files: { header, sequence, video texture }.
-By default *vol2obj* will only convert the first frame from a Vologram, but we can actually export any frame, a range of frames, or all the frames to .obj files.
-
-If we run the vol2obj program from a terminal, without arguments, it will tell us the inputs required:
-
-```
-$  ./vol2obj.bin 
-Usage for single-file Volograms:
-./vol2obj.bin [OPTIONS] -c MYFILE.VOLS
-
-Usage for multi-file Volograms:
-./vol2obj.bin [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4
-
-Options:
---all, -a
-Create output files for, and process, all frames found in the sequence.
-If given, then paramters -f and -l are ignored.
-
---combined, -c
-Required for single-file Volograms. The next argument gives the path to your myfile.vols.
-
---header, -h
-Required for multi-file Volograms. The next argument gives the path to the header.vols file.
-
---help
-Prints this text.
-
---first, -f
-The next argument gives the frame number of the first frame to process (frames start at 0).
-If the -l parameter is not given then only this single frame is processed.
-Default value 0.
-
---last, -l
-The next argument gives the frame number of the last frame to process.
-Can be used with -f to process a range of frames from first to last, inclusive.
-
---output-dir, -o
-The next argument gives the path to a directory to write output files into.
-Default is the current working directory.
-
---prefix, -p
-The next argument gives the prefix to use for output filenames.
-Default is output_frame_.
-
---sequence, -s
-Required for multi-file Volograms. The next argument gives the path to the sequence_0.vols file.
-
---video, -v
-Required for multi-file Volograms. The next argument gives the path to the video texture file.
-```
-
 ### Examples
 
 * Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
@@ -231,6 +178,8 @@ Wrote material file `only12/output_frame_00000012.mtl`
 Wrote image file `only12/output_frame_00000012.jpg`
 Vologram processing completed.
 ```
+
+For a full list of command-line parameter options run with `--help`.
 
 ## Security and Fuzzing
 
