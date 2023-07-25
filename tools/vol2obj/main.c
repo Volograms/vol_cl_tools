@@ -33,7 +33,7 @@
  *
  * History
  * -----------
- * - 0.8.0   (2023/07/05) - `--combined` flag. vols v1.3 support with Basis Universal textures (and drag-and-drop support). Disk space check.
+ * - 0.8.0   (2023/07/05) - `--combined` and `--no-normals` flags. vols v1.3 and Basis Universal texture support. Expanded drag-and-drop. Disk space check.
  * - 0.7.1   (2023/06/20) - Support for Volograms without normals.
  * - 0.7.0   (2022/07/29) - `--prefix` flag, and updated vol_libs, updated cl param parsing system.
  * - 0.6.0   (2022/06/17) - Fix for drag-and-drop not finding the new 1k video texture files.
