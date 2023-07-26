@@ -31,7 +31,7 @@ The following examples use Windows `vol2obj.exe`. For Linux/macOS substitute `./
 
 ![Dragging a Vologram folder onto the vol2obj executable for a quick output preview.](drag-and-drop.gif)
 
-* To use the command-line for the same:
+* To use the command-line for the same. For single-file Volograms:
 
 ```
 ./vol2obj.exe -c my_Vologram.vols --output_dir my_first_capture
