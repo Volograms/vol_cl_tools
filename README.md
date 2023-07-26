@@ -107,7 +107,7 @@ README.md            -- This file.
 * Make sure that Git is installed on your system.
 * Clone this repository.
 * Install FFmpeg development libraries:
-    * For Windows these can be found under the `thirdparty/ffmpeg_lgpl_free/` sub-directory, and you don't need to do anything.
+    * For Windows these can be found under the `thirdparty/ffmpeg/` sub-directory, and you don't need to do anything.
     * On Ubuntu `sudo apt-get install build-essential clang libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev libswscale-dev`
     * On macOS `brew install ffmpeg`.
 
