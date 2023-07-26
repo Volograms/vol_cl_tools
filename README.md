@@ -21,9 +21,6 @@ There is a video tutorial available now [How to covert Volograms to .obj files](
 * On the computer you have *vol2obj*, download and unzip the Vologram.
 * Put it in the same folder as the *vol2obj* tool so that it is easy to find.
 * Newer Volograms will comprise a single *.vols* file. Older Volograms will be a folder containing *header.vols*, *sequence.vols*, and *texture_...* video files.
-* Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
-* Change directory to the folder containing *vol2obj*.
-* 
 
 ### Convert a Vologram Frame to .obj
 
@@ -34,7 +31,7 @@ The following examples use Windows `vol2obj.exe`. For Linux/macOS substitute `./
 
 ![Dragging a Vologram folder onto the vol2obj executable for a quick output preview.](drag-and-drop.gif)
 
-* To use the command-line for the same. For single-file Volograms:
+* To use the command-line for the same:
 
 ```
 ./vol2obj.exe -c my_Vologram.vols --output_dir my_first_capture
