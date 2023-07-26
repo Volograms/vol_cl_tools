@@ -8,7 +8,7 @@ Tools can be built and run for GNU/Linux, macOS, and Microsoft Windows environme
 
 ## Quick-Start - Turn a *Volu* Capture into a 3D Model You Can Use
 
-There is a video tutorial available now [How to covert volograms to .obj files](https://youtu.be/PJ8_ZCduqLY).
+There is a video tutorial available now [How to covert Volograms to .obj files](https://youtu.be/PJ8_ZCduqLY).
 
 ### Get the vol2obj Tool
 
@@ -18,29 +18,39 @@ There is a video tutorial available now [How to covert volograms to .obj files](
 ### Get a Vologram You Have Captured Off Your Phone
 
 * On iOS you can find these using the *Files* system app, browsing to *Volu*, then *Volograms*.
-* The volograms appear as numbered folders.
+* The Volograms appear as numbered folders.
 * If you tap-and-hold you can *share* one of these folders with yourself by e.g. email and *Mail Drop* or another file transfer method.
 * Usually it is zipped before sending.
 
-* On the computer you have *vol2obj*, download and unzip the vologram folder you got off your phone.
+* On the computer you have *vol2obj*, download and unzip the Vologram folder you got off your phone.
 * Put it in the same folder as the *vol2obj* tool so it's easy to find.
-* Your vologram capture's folder will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
+* Your Vologram capture's folder will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
 * Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
 * Change directory to the folder containing *vol2obj*.
 
 ### Convert a Vologram Frame to .obj
 
-* For Windows users, you can quickly output just the first frame of a vologram by dragging a folder containing the vologram files onto `vol2obj.exe`.
+The latest version of the VOLS file format puts everything into a single `my_Vologram.vols` file.
+Older versions use 3 separate files. The *vol2obj* tool can handle both versions.
 
-![Dragging a vologram folder onto the vol2obj executable for a quick output preview.](drag-and-drop.gif)
+* For Windows users, you can quickly output just the first frame of a Vologram by dragging a single-file Vologram, or a folder containing a multi-file Vologram, onto `vol2obj.exe`.
 
-* Run *vol2obj* and point it to your vologram's header, sequence, and texture files. e.g. if your vologram capture is in a folder called `1625575284206_ld` and it's in the same directory as the *vol2obj* program:
+![Dragging a Vologram folder onto the vol2obj executable for a quick output preview.](drag-and-drop.gif)
+
+* To use the command-line for the same. For single-file Volograms:
 
 ```
-.\vol2obj.exe -h 1625575284206_ld\header.vols -s 1625575284206_ld\sequence_0.vols -v 1625575284206_ld\texture_2048_h264.mp4 --output_dir my_first_capture
+./vol2obj.exe -c my_Vologram.vols --output_dir my_first_capture
 ```
 
-* This will create a directory called `my_first_capture` containing the first frame of your vologram sequence as the following files:
+* For multi-file Volograms, run *vol2obj* and point it to your Vologram's header, sequence, and texture files.
+e.g. if your Vologram capture is in a folder called `1625575284206_ld` and that is in the same directory as the *vol2obj* program:
+
+```
+./vol2obj.exe -h 1625575284206_ld/header.vols -s 1625575284206_ld/sequence_0.vols -v 1625575284206_ld/texture_2048_h264.mp4 --output_dir my_first_capture
+```
+
+* This will create a directory called `my_first_capture` containing the first frame of your Vologram sequence as the following files:
 
 ```
 output_frame_00000000.jpg  -- JPEG texture.
@@ -50,34 +60,32 @@ output_frame_00000000.obj  -- Wavefront OBJ mesh file.
 
 ### Import the .obj into 3D Software
 
-You should be able to import or drag-and-drop this into most 3D software and 3D game engines.
+You can import or drag-and-drop this into most 3D software and 3D game engines.
 
 * In [Blender](https://www.blender.org/) *File->Import->Wavefront (.obj)* and navigate to the .obj in your `my_first_capture` directory. If *Image Search* is ticked it should also find the texture image.
 * In [Unity](https://unity.com/) right click in the *Assets* pane and *Import New Asset*. Select the .obj and matching .jpg from `my_first_capture`. Drag the new model into the *Scene* pane. Then drag the new texture onto the model in the scene to apply it.
 
 ### Tips
 
-* On Windows you can skip using the command line, and drag the vologram capture's folder (e.g. `1625575284206_ld`) directly onto the `vol2obj.exe` program. This will extract the first frame from the vologram as an .obj, which can be handy for a quick conversion.
-* For more details on extracting frames with *vol2obj* see the [vol2obj Parameters](#vol2obj-parameters) section.
-* You only need to use the command line for running the *vol2obj* tool's command.
-* Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the file.
-* If header and sequence input files mismatch, expect an error.
+* Some operating systems now have 3D previewers for .obj files built in, so you may even get a 3D render if you click on the `.obj` file.
+* For more details on parameters to help extracting frames with *vol2obj* run `--help` from the command line.
 * To avoid mixing up files between captures:
   * Create a new output directory using `--output_dir` for each capture you process.
-  * Keep each capture's header, sequence, and video files together in their unique folder. You can rename this to a more meaningful name e.g. from `1625575284206_ld/` to `martial_arts_pose/`
+  * You can add a `--prefix` to change `output_frame_` to some more specific file text.
+  * Keep each capture's files together in their unique folder. You can rename this to a more meaningful name e.g. from `1625575284206_ld/` to `martial_arts_pose/`.
 
 ## Repository Contents ##
 
-| Tool    | Version | Description                                                                                   |
-|---------|---------|-----------------------------------------------------------------------------------------------|
-| vol2obj | 0.7.0   | Convert a frame from a vologram sequence to a Wavefront .obj file + .mtl material + jpg file. |
-| cutvols | 0.3.0   | Cut a sequence of frames from a vologram into a new, shorter, vologram sequence.              |
+| Tool    | Version | Description                                                                                          |
+|---------|---------|------------------------------------------------------------------------------------------------------|
+| vol2obj | 0.8.0   | Convert a frame from a Vologram sequence to a Wavefront `.obj` file + `.mtl` material + `.jpg` file. |
+| cutvols | 0.3.0   | Cut a sequence of frames from a Vologram into a new, shorter, Vologram sequence.                     |
 
-Further tools to be added: obj2vol, sequence cutting and manipulation. 
+Further tools to be added: obj2vol, and manipulation tools to e.g. strip out normals, or change internal texture formats.
 
 ```
-lib/                 -- Core vologram processing libraries, vol_av (video textures) and vol_geom (vologram meshes).
-samples/             -- Simple example volograms;
+lib/                 -- Core Vologram processing libraries from [vol_libs](https://github.com/Volograms/vol_libs) repository.
+samples/             -- Simple example Volograms;
 samples/cone_hdr.vol -- Vologram header for a 1-frame 3D cone.
 samples/cone_seq.vol -- Vologram sequence for the 1-frame 3D cone.
 samples/counter.mp4  -- Video texture of numbered frames, useful for debugging.
@@ -87,7 +95,7 @@ samples/cube_seq.vol -- Vologram sequence for the 1-frame 3D cube.
 samples/quad_hdr.vol -- Vologram header for a 1-frame 3D rectangle.
 samples/quad_seq.vol -- Vologram sequence for the 1-frame 3D rectangle.
 third_party/         -- Third-party libraries used by tools.
-tools/cutvols/       -- The vologram sequence cutting tool.
+tools/cutvols/       -- The Vologram sequence cutting tool.
 tools/vol2obj/       -- The vol2obj converter tool.
 LICENSE              -- Licence details for this project.
 Makefile             -- GNU Makefile to build tools with Clang or GCC.
@@ -99,7 +107,7 @@ README.md            -- This file.
 * Make sure that Git is installed on your system.
 * Clone this repository.
 * Install FFmpeg development libraries:
-    * For Windows these can be found under the `thirdparty/ffmpeg_lgpl_free/` sub-directory, and you don't need to do anything.
+    * For Windows these can be found under the `thirdparty/ffmpeg/` sub-directory, and you don't need to do anything.
     * On Ubuntu `sudo apt-get install build-essential clang libavcodec-dev libavdevice-dev libavformat-dev libavutil-dev libswscale-dev`
     * On macOS `brew install ffmpeg`.
 
@@ -124,7 +132,7 @@ make
 
 ### Troubleshooting
 
-Homebrew on M1 Macs may require environment variables to be set: 
+Homebrew on M1 Macs may require environment variables to be set:
 
 ```
 export CPATH=/opt/homebrew/include
@@ -133,66 +141,23 @@ export LIBRARY_PATH=/opt/homebrew/lib
 
 There is a more detailed answer at https://apple.stackexchange.com/questions/414622/installing-a-c-c-library-with-homebrew-on-m1-macs
 
-## vol2obj Parameters
-
-Volograms are multi-frame 3D animations that are currently split into 3 files: { header, sequence, video texture }.
-By default *vol2obj* will only convert the first frame from a vologram, but we can actually export any frame, a range of frames, or all the frames to .obj files.
-
-If we run the vol2obj program from a terminal, without arguments, it will tell us the inputs required:
-
-```
-$  ./vol2obj.bin 
-Usage ./vol2obj.bin [OPTIONS] -h HEADER.VOLS -s SEQUENCE.VOLS -v VIDEO.MP4
-Options:
---all, -a
-Create output files for, and process, all frames found in the sequence.
-If given then paramters -f and -l are ignored.
-
---header, -h
-Required. The next argument gives the path to the header.vols file.
-
---help
-Prints this text.
-
---first, -f
-The next argument gives the frame number of the first frame to process (frames start at 0).
-If the -l parameter is not given then only this single frame is processed.
-Default value 0.
-
---last, -l
-The next argument gives the frame number of the last frame to process.
-Can be used with -f to process a range of frames from first to last, inclusive.
-
---output_dir, -o
-The next argument gives the path to a directory to write output files into.
-Default is the current working directory.
-
---prefix, -p
-The next argument gives the prefix to use for output filenames.
-Default is output_frame_.
-
---sequence, -s
-Required. The next argument gives the path to the sequence_0.vols file.
-
---video, -v
-Required. The next argument gives the path to the video texture file.
-```
-
 ### Examples
 
-* Convert the first 5 frames (0 to 4, inclusive) from a vologram in directory `..\1625472326152_ld\` to numbered .objs:
+The following examples use Windows `vol2obj.exe`. For Linux/macOS substitute `./vol2obj.bin`.
+
+* Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
 
 ```
 vol2obj.exe -f 0 -l 4 --output_dir range -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
 ```
 
-* Convert all the frames from a vologram:
+* Convert all the frames from a Vologram:
 
 ```
 vol2obj.exe --all --output_dir all_my_frames -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
 ```
 
-* Convert only frame 12 from a vologram:
+* Convert only frame 12 from a Vologram:
 
 ```
 vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
@@ -216,17 +181,33 @@ Wrote image file `only12/output_frame_00000012.jpg`
 Vologram processing completed.
 ```
 
+For a full list of command-line parameter options run with `--help`.
+
 ## Security and Fuzzing
 
 * The core code in this repository has been fuzzed using [AFL](https://github.com/google/AFL).
-* Third party image writing code has not been fuzzed yet, and should not be considered secure at this stage, for use in internal asset pipelines, but of course is fine for test or hobby use.
+* Third-party image writing code has not been fuzzed yet, and should not be considered secure at this stage, for use in internal asset pipelines, but of course is fine for test or hobby use.
 
 ## Licence ##
 
-Copyright 2021, Volograms.
+Copyright 2023-2021, Volograms.
 The MIT License. See the `LICENSE` file for details.
 
 ### Dependencies
+
+* This software uses the unaltered transcoder from [Basis Universal](https://binomialllc.github.io/basis_universal/) by [Binomial](http://www.binomial.info/). The transcoder, in turn, uses some code under zlib and BSD (Zstandard). The supported texture formats are [open Khronos Group standards](https://www.khronos.org/registry/DataFormat/specs/1.1/dataformat.1.1.html).
+
+>    Licensed under the Apache License, Version 2.0 (the "License");
+>    you may not use this file except in compliance with the License.
+>    You may obtain a copy of the License at
+> 
+>        http://www.apache.org/licenses/LICENSE-2.0
+> 
+>    Unless required by applicable law or agreed to in writing, software
+>    distributed under the License is distributed on an "AS IS" BASIS,
+>    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+>    See the License for the specific language governing permissions and
+>    limitations under the License.
 
 * This software uses unaltered code of <a href=http://ffmpeg.org>FFmpeg</a> licensed under the <a href=http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>LGPLv2.1</a> and its source code can be found at [github.com/FFmpeg/FFmpeg](https://github.com/FFmpeg/FFmpeg).
 
