@@ -17,21 +17,18 @@ There is a video tutorial available now [How to covert Volograms to .obj files](
 
 ### Get a Vologram You Have Captured Off Your Phone
 
-* On iOS you can find these using the *Files* system app, browsing to *Volu*, then *Volograms*.
-* The Volograms appear as numbered folders.
-* If you tap-and-hold you can *share* one of these folders with yourself by e.g. email and *Mail Drop* or another file transfer method.
-* Usually it is zipped before sending.
-
-* On the computer you have *vol2obj*, download and unzip the Vologram folder you got off your phone.
-* Put it in the same folder as the *vol2obj* tool so it's easy to find.
-* Your Vologram capture's folder will contain *header.vols*, *sequence.vols*, *skeleton.bvh*, and *texture_2048...* files.
+* In *Volu* select a Vologram, and find the *Export* button under the *...* menu.
+* On the computer you have *vol2obj*, download and unzip the Vologram.
+* Put it in the same folder as the *vol2obj* tool so that it is easy to find.
+* Newer Volograms will comprise a single *.vols* file. Older Volograms will be a folder containing *header.vols*, *sequence.vols*, and *texture_...* video files.
 * Open a terminal. On Windows click the Start Menu and type `cmd` to open Command Prompt. On macOS open the Terminal app.
 * Change directory to the folder containing *vol2obj*.
+* 
 
 ### Convert a Vologram Frame to .obj
 
-The latest version of the VOLS file format puts everything into a single `my_Vologram.vols` file.
-Older versions use 3 separate files. The *vol2obj* tool can handle both versions.
+The *vol2obj* tool can handle single file and multi-file versions of Volograms.
+The following examples use Windows `vol2obj.exe`. For Linux/macOS substitute `./vol2obj.bin`.
 
 * For Windows users, you can quickly output just the first frame of a Vologram by dragging a single-file Vologram, or a folder containing a multi-file Vologram, onto `vol2obj.exe`.
 
@@ -48,6 +45,12 @@ e.g. if your Vologram capture is in a folder called `1625575284206_ld` and that 
 
 ```
 ./vol2obj.exe -h 1625575284206_ld/header.vols -s 1625575284206_ld/sequence_0.vols -v 1625575284206_ld/texture_2048_h264.mp4 --output_dir my_first_capture
+```
+
+Or just the directory, and let it find the files within:
+
+```
+./vol2obj.exe 1625575284206_ld --output_dir my_first_capture
 ```
 
 * This will create a directory called `my_first_capture` containing the first frame of your Vologram sequence as the following files:
@@ -142,8 +145,6 @@ export LIBRARY_PATH=/opt/homebrew/lib
 There is a more detailed answer at https://apple.stackexchange.com/questions/414622/installing-a-c-c-library-with-homebrew-on-m1-macs
 
 ### Examples
-
-The following examples use Windows `vol2obj.exe`. For Linux/macOS substitute `./vol2obj.bin`.
 
 * Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
 
