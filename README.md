@@ -44,7 +44,7 @@ e.g. if your Vologram capture is in a folder called `1625575284206_ld` and that 
 ./vol2obj.exe -h 1625575284206_ld/header.vols -s 1625575284206_ld/sequence_0.vols -v 1625575284206_ld/texture_2048_h264.mp4 --output_dir my_first_capture
 ```
 
-Or just the directory, and let it find the files within:
+Or just give the directory as the first argument, and let *vol2obj* find the files within:
 
 ```
 ./vol2obj.exe 1625575284206_ld --output_dir my_first_capture
@@ -73,6 +73,47 @@ You can import or drag-and-drop this into most 3D software and 3D game engines.
   * Create a new output directory using `--output_dir` for each capture you process.
   * You can add a `--prefix` to change `output_frame_` to some more specific file text.
   * Keep each capture's files together in their unique folder. You can rename this to a more meaningful name e.g. from `1625575284206_ld/` to `martial_arts_pose/`.
+
+### More Advanced Examples
+
+* Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
+
+```
+vol2obj.exe -f 0 -l 4 --output_dir range -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
+```
+
+* Convert all the frames from a Vologram:
+
+```
+vol2obj.exe --all --output_dir all_my_frames -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
+```
+
+* Convert only frame 12 from a Vologram:
+
+```
+vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
+```
+
+In this last case the output in the terminal shows us that it has written the following files into the directory we asked for:
+
+```
+vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
+
+Created directory `only12/`
+Using output directory = `only12/`
+Converting
+  frames                 12-12
+  header                `..\1625472326152_ld\header.vols`
+  sequence              `..\1625472326152_ld\sequence_0.vols`
+  video texture `..\1625472326152_ld\texture_2048_h264.mp4`
+Wrote mesh file `only12/output_frame_00000012.obj`
+Wrote material file `only12/output_frame_00000012.mtl`
+Wrote image file `only12/output_frame_00000012.jpg`
+Vologram processing completed.
+```
+
+For a full list of command-line parameter options run with `--help`.
+
 
 ## Repository Contents ##
 
@@ -140,46 +181,6 @@ export LIBRARY_PATH=/opt/homebrew/lib
 ```
 
 There is a more detailed answer at https://apple.stackexchange.com/questions/414622/installing-a-c-c-library-with-homebrew-on-m1-macs
-
-### Examples
-
-* Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
-
-```
-vol2obj.exe -f 0 -l 4 --output_dir range -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
-```
-
-* Convert all the frames from a Vologram:
-
-```
-vol2obj.exe --all --output_dir all_my_frames -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
-```
-
-* Convert only frame 12 from a Vologram:
-
-```
-vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
-```
-
-In this last case the output in the terminal shows us that it has written the following files into the directory we asked for:
-
-```
-vol2obj.exe -f 12 --output_dir only12 -h ..\1625472326152_ld\header.vols -s ..\1625472326152_ld\sequence_0.vols -v ..\1625472326152_ld\texture_2048_h264.mp4
-
-Created directory `only12/`
-Using output directory = `only12/`
-Converting
-  frames                 12-12
-  header                `..\1625472326152_ld\header.vols`
-  sequence              `..\1625472326152_ld\sequence_0.vols`
-  video texture `..\1625472326152_ld\texture_2048_h264.mp4`
-Wrote mesh file `only12/output_frame_00000012.obj`
-Wrote material file `only12/output_frame_00000012.mtl`
-Wrote image file `only12/output_frame_00000012.jpg`
-Vologram processing completed.
-```
-
-For a full list of command-line parameter options run with `--help`.
 
 ## Security and Fuzzing
 
