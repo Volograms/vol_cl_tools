@@ -76,6 +76,8 @@ You can import or drag-and-drop this into most 3D software and 3D game engines.
 
 ### More Advanced Examples
 
+For a full list of command-line parameter options, and their usage, run with `--help`.
+
 * Convert the first 5 frames (0 to 4, inclusive) from a Vologram in directory `..\1625472326152_ld\` to numbered .objs:
 
 ```
@@ -111,9 +113,6 @@ Wrote material file `only12/output_frame_00000012.mtl`
 Wrote image file `only12/output_frame_00000012.jpg`
 Vologram processing completed.
 ```
-
-For a full list of command-line parameter options run with `--help`.
-
 
 ## Repository Contents ##
 
