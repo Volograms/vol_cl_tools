@@ -167,7 +167,7 @@ static vol_av_video_t _av_info;                      // Audio-video information 
 static vol_geom_info_t _geom_info;                   // Mesh information from vol_geom library.
 
 // stb_image_write.
-static int _jpeg_quality = 95; // Arbitrary choice of 95% quality v size based on GIMP's default.
+static int _jpeg_quality = 97; // Arbitrary choice of 97% quality v size based on GIMP's default 95%.
 
 // Basis Universal.
 static const int _dims_presize = 8192; // Maximum texture size for Basis Universal transcoding.
@@ -508,7 +508,8 @@ static bool _write_geom_frame_to_mesh( //
   const char* output_mtl_filename,     //
   const char* material_name,           //
   int frame_idx,
-  bool no_normals                      //
+  bool no_normals,                     //
+  FILE* output_kf_file_ptr
 ) {
   if ( !( seq_filename || combined_filename ) || !output_mesh_filename || frame_idx < 0 ) { return false; }
 
@@ -532,7 +533,7 @@ static bool _write_geom_frame_to_mesh( //
       assert( _key_frame_data.block_data_sz <= _geom_info.biggest_frame_blob_sz && "Frame was bigger than pre-allocated biggest blob size." );
       memcpy( _key_blob_ptr, _key_frame_data.block_data_ptr, _key_frame_data.block_data_sz );
       _prev_key_frame_loaded_idx = key_idx;
-    }
+    } 
     // Data that always comes from the frame's keyframe.
     texcoords_sz  = _key_frame_data.uvs_sz;
     indices_sz    = _key_frame_data.indices_sz;
@@ -547,6 +548,14 @@ static bool _write_geom_frame_to_mesh( //
         return false;
       }
       frame_ptr = frame_data.block_data_ptr;
+    }
+    // output keyframe name
+    if(key_idx == frame_idx) {
+      if(output_kf_file_ptr) {
+        char frame_name[MAX_FILENAME_LEN]; 
+        sprintf( frame_name, "%s%05i\n", _prefix_str, frame_idx );
+        fprintf( output_kf_file_ptr, "%s", frame_name );
+      }
     }
 
     // Data that comes from current frame (which may be a keyframe).
@@ -612,6 +621,16 @@ static bool _write_geom_frame_to_mesh( //
 static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all_frames, bool no_normals ) {
   bool use_vol_av = false;
 
+  // A file for writing key-farme numbers 
+  char output_keyframes_path[MAX_FILENAME_LEN]; 
+  sprintf( output_keyframes_path, "%s%s", _output_dir_path, "list_key_frames.txt" );
+
+  FILE* f_okf_ptr = fopen( output_keyframes_path, "w" ); 
+  if ( !f_okf_ptr ) {
+    // Don't fail only becasue of this but output an error message
+    _printlog( _LOG_TYPE_ERROR, "ERROR: Opening file for writing `%s`\n", output_keyframes_path );
+  }
+
   // Mesh processing.
   {
     bool streaming_mode = true; // File access on every frame but consumes less memory.
@@ -648,13 +667,13 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
     last_frame_idx = all_frames ? n_frames - 1 : last_frame_idx;
 
     for ( int i = first_frame_idx; i <= last_frame_idx; i++ ) {
-      sprintf( _output_mesh_filename, "%s%08i.obj", _prefix_str, i );
-      sprintf( _output_mtl_filename, "%s%08i.mtl", _prefix_str, i );
-      sprintf( _material_name, "vol_mtl_%08i", i );
-      sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i );
+      sprintf( _output_mesh_filename, "%s%05i.obj", _prefix_str, i );
+      sprintf( _output_mtl_filename, "%s%05i.mtl", _prefix_str, i );
+      sprintf( _material_name, "vol_mtl_%05i", i );
+      sprintf( _output_img_filename, "%s%05i.jpg", _prefix_str, i );
 
       // And geometry.
-      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i, no_normals ) ) {
+      if ( !_write_geom_frame_to_mesh( _input_sequence_filename, _input_combined_filename, _output_mesh_filename, _output_mtl_filename, _material_name, i, no_normals, f_okf_ptr ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write geometry frame %i to file\n", i );
         goto _pv_fail;
       }
@@ -702,7 +721,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
         }
       }
 
-      sprintf( _output_img_filename, "%s%08i.jpg", _prefix_str, i );
+      sprintf( _output_img_filename, "%s%05i.jpg", _prefix_str, i );
 
       if ( !_write_video_frame_to_image( _output_img_filename, _av_info.pixels_ptr, _av_info.w, _av_info.h, 3 ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: failed to write video frame %i to file\n", first_frame_idx );
