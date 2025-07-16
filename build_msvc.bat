@@ -11,7 +11,7 @@ REM call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\VC\Auxi
 
 REM "we recommend you compile by using either the /W3 or /W4 warning level"
 REM C4221 is nonstandard extension used in struct literals.
-set COMPILER_FLAGS=/W4 /D_CRT_SECURE_NO_WARNINGS /wd4221 /fno-strict-aliasing /DBASISD_SUPPORT_KTX2=0
+set COMPILER_FLAGS=/W4 /D_CRT_SECURE_NO_WARNINGS /wd4221 /DBASISD_SUPPORT_KTX2=1 /DBASISD_SUPPORT_KTX2_ZSTD=1 /DZSTD_DISABLE_ASM
 set LIBS= ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avcodec.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avdevice.lib ^
@@ -36,7 +36,8 @@ set SRC_VOL2OBJ= ^
 ..\lib\vol_av.c ^
 ..\lib\vol_basis.cpp ^
 ..\lib\vol_geom.c ^
-..\thirdparty\basis_universal\transcoder\basisu_transcoder.cpp
+..\thirdparty\basis_universal\transcoder\basisu_transcoder.cpp ^
+..\thirdparty\basis_universal\zstd\zstd.c
 
 cl %COMPILER_FLAGS% %SRC_VOL2OBJ% %I% /link %LINKER_FLAGS_VOL2OBJ% %LIBS%
 if %errorlevel% neq 0 (
@@ -50,10 +51,29 @@ echo Building vol2vol...
 set LINKER_FLAGS_VOL2VOL=/out:vol2vol.exe
 set SRC_VOL2VOL= ^
 ..\tools\vol2vol\main.c ^
+..\tools\vol2vol\basis_encoder_wrapper.cpp ^
 ..\lib\vol_av.c ^
 ..\lib\vol_basis.cpp ^
 ..\lib\vol_geom.c ^
-..\thirdparty\basis_universal\transcoder\basisu_transcoder.cpp
+..\thirdparty\basis_universal\transcoder\basisu_transcoder.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_enc.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_comp.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_resampler.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_resample_filters.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_backend.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_frontend.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_basis_file.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_etc.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_bc7enc.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_uastc_enc.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_kernels_sse.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_opencl.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_gpu_texture.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_ssim.cpp ^
+..\thirdparty\basis_universal\encoder\basisu_pvrtc1_4.cpp ^
+..\thirdparty\basis_universal\encoder\jpgd.cpp ^
+..\thirdparty\basis_universal\encoder\pvpngreader.cpp ^
+..\thirdparty\basis_universal\zstd\zstd.c
 
 cl %COMPILER_FLAGS% %SRC_VOL2VOL% %I% /link %LINKER_FLAGS_VOL2VOL% %LIBS%
 if %errorlevel% neq 0 (

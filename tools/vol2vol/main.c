@@ -22,6 +22,8 @@
  *
  * Options:
  *   --no-normals    Remove normals from the output vologram
+ *   --texture-size  Resize texture to specified resolution (e.g., 512x512)
+ *                   Uses BASIS Universal's high-quality resampling and preserves BASIS format
  *   --help          Show this help message
  *
  * Compilation
@@ -33,6 +35,7 @@
 #include "vol_av.h"    // Volograms' texture video library.
 #include "vol_basis.h" // Volograms' Basis Universal wrapper library.
 #include "vol_geom.h"  // Volograms' .vols file parsing library.
+#include "basis_encoder_wrapper.h" // BASIS Universal encoder C wrapper.
 
 #include <assert.h>
 #include <stdarg.h>
@@ -79,6 +82,7 @@ typedef enum cl_flag_enum_t {
     CL_SEQUENCE,
     CL_VIDEO,
     CL_NO_NORMALS,
+    CL_TEXTURE_SIZE,
     CL_HELP,
     CL_MAX
 } cl_flag_enum_t;
@@ -105,6 +109,7 @@ static cl_flag_t _cl_flags[CL_MAX] = {
     { "--sequence", "-s", "Sequence file (for multi-file volograms).\n", 1 },
     { "--video", "-v", "Video texture file (for multi-file volograms).\n", 1 },
     { "--no-normals", "-n", "Remove normals from the output vologram.\n", 0 },
+    { "--texture-size", "-t", "Resize texture to specified resolution (e.g., 512x512).\n", 1 },
     { "--help", NULL, "Show this help message.\n", 0 }
 };
 
@@ -122,6 +127,8 @@ static char* _output_filename;
 
 // Processing options
 static bool _no_normals = false;
+static int _texture_width = 0;   // 0 means no resizing
+static int _texture_height = 0;  // 0 means no resizing
 
 // Vol data structures
 static vol_geom_info_t _geom_info;
@@ -132,10 +139,11 @@ static uint8_t* _key_blob_ptr;
 static vol_geom_frame_data_t _key_frame_data;
 static int _prev_key_frame_loaded_idx = -1;
 
+
 /**
  * Print log messages with color formatting
  */
-static void _printlog( _log_type log_type, const char* message_str, ... ) {
+ static void _printlog( _log_type log_type, const char* message_str, ... ) {
     FILE* stream_ptr = stdout;
     if ( _LOG_TYPE_ERROR == log_type ) {
         stream_ptr = stderr;
@@ -217,6 +225,106 @@ static bool _evaluate_params( int start_from_arg_idx ) {
     }
     return true;
 }
+  
+// Manual bilinear interpolation removed - now using BASIS Universal encoder's built-in high-quality resampling
+
+/**
+ * Process texture data - decode, resize if needed, and prepare for output
+ * 
+ * @param texture_data         Input texture data
+ * @param texture_size         Size of input texture data
+ * @param geom_info           Geometry info containing texture format information
+ * @param output_data_ptr     Pointer to store output texture data (will be allocated)
+ * @param output_size_ptr     Pointer to store output texture size
+ * @param output_width_ptr    Pointer to store output texture width
+ * @param output_height_ptr   Pointer to store output texture height
+ * @return                    True on success, false on error
+ */
+static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture_size,
+                                  const vol_geom_info_t* geom_info,
+                                  uint8_t** output_data_ptr, uint32_t* output_size_ptr,
+                                  uint32_t* output_width_ptr, uint32_t* output_height_ptr ) {
+    if ( !texture_data || !texture_size || !geom_info || !output_data_ptr || !output_size_ptr ) {
+        return false;
+    }
+    
+    // Initialize output parameters
+    *output_data_ptr = NULL;
+    *output_size_ptr = 0;
+    *output_width_ptr = geom_info->hdr.texture_width;
+    *output_height_ptr = geom_info->hdr.texture_height;
+    
+    // Check if we need to resize texture
+    bool need_resize = (_texture_width > 0 && _texture_height > 0) &&
+                       ((uint32_t)_texture_width != geom_info->hdr.texture_width ||
+                        (uint32_t)_texture_height != geom_info->hdr.texture_height);
+    
+    // If no resizing needed, just copy the data
+    if ( !need_resize ) {
+        *output_data_ptr = malloc( texture_size );
+        if ( !*output_data_ptr ) {
+            return false;
+        }
+        memcpy( *output_data_ptr, texture_data, texture_size );
+        *output_size_ptr = texture_size;
+        return true;
+    }
+    
+    // For BASIS textures with resizing, use BASIS Universal encoder
+    if ( geom_info->hdr.version >= 13 && geom_info->hdr.texture_container_format == 1 ) {
+        // BASIS texture - decode to RGBA32
+        const int rgba_buffer_size = 8192 * 8192 * 4; // Maximum texture size
+        uint8_t* rgba_data = malloc( rgba_buffer_size );
+        if ( !rgba_data ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate memory for RGBA texture data\n" );
+            return false;
+        }
+        
+        // Transcode BASIS to RGBA32 (format 13)
+        int src_width, src_height;
+        if ( !vol_basis_transcode( 13, (void*)texture_data, texture_size, rgba_data, rgba_buffer_size, &src_width, &src_height ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to transcode BASIS texture\n" );
+            free( rgba_data );
+            return false;
+        }
+        
+        _printlog( _LOG_TYPE_INFO, "Decoded BASIS texture: %dx%d\n", src_width, src_height );
+        
+        // Use BASIS Universal encoder for resizing and re-encoding
+        // This preserves BASIS format and uses high-quality resampling
+        bool use_uastc = (geom_info->hdr.texture_compression == 2);  // 2 = UASTC, 1 = ETC1S
+        
+        if ( !basis_encode_texture_with_resize( rgba_data, src_width, src_height,
+                                               _texture_width, _texture_height, use_uastc,
+                                               output_data_ptr, output_size_ptr ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to encode resized texture to BASIS format\n" );
+            free( rgba_data );
+            return false;
+        }
+        
+        free( rgba_data );
+        
+        // Update output dimensions
+        *output_width_ptr = _texture_width;
+        *output_height_ptr = _texture_height;
+        
+        _printlog( _LOG_TYPE_INFO, "Successfully resized and re-encoded BASIS texture from %dx%d to %dx%d\n",
+                  src_width, src_height, _texture_width, _texture_height );
+        
+        return true;
+    } else {
+        // For non-BASIS textures, resizing is not supported - just copy the data
+        _printlog( _LOG_TYPE_WARNING, "WARNING: Texture resizing is only supported for BASIS textures in version 13+ volograms\n" );
+        *output_data_ptr = malloc( texture_size );
+        if ( !*output_data_ptr ) {
+            return false;
+        }
+        memcpy( *output_data_ptr, texture_data, texture_size );
+        *output_size_ptr = texture_size;
+        return true;
+    }
+}
+
 
 /**
  * Write a vols file header to the output file
@@ -340,7 +448,14 @@ static bool _write_frame_data( FILE* output_file, const vol_geom_frame_data_t* f
     
     // Add texture data if present
     if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        total_written_sz += sizeof( uint32_t ) + frame_data->texture_sz; // texture size field + data
+        // Calculate the size of processed texture data
+        uint32_t processed_texture_size = frame_data->texture_sz;
+        if ( _texture_width > 0 && _texture_height > 0 && 
+             geom_info->hdr.version >= 13 && geom_info->hdr.texture_container_format == 1 ) {
+            // If we're resizing a BASIS texture to raw format, calculate new size
+            processed_texture_size = _texture_width * _texture_height * 4; // RGBA
+        }
+        total_written_sz += sizeof( uint32_t ) + processed_texture_size; // texture size field + data
     }
     
     // Write vertices size and data
@@ -370,9 +485,31 @@ static bool _write_frame_data( FILE* output_file, const vol_geom_frame_data_t* f
     
     // Write texture size and data if present
     if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        if ( 1 != fwrite( &frame_data->texture_sz, sizeof( uint32_t ), 1, output_file ) ) return false;
-        if ( frame_data->texture_sz != fwrite( &frame_data->block_data_ptr[frame_data->texture_offset], 
-                                              sizeof( uint8_t ), frame_data->texture_sz, output_file ) ) return false;
+        uint8_t* processed_texture_data = NULL;
+        uint32_t processed_texture_size = 0;
+        uint32_t processed_width = 0;
+        uint32_t processed_height = 0;
+        
+        // Process texture data (decode, resize if needed)
+        if ( !_process_texture_data( &frame_data->block_data_ptr[frame_data->texture_offset], 
+                                    frame_data->texture_sz, geom_info,
+                                    &processed_texture_data, &processed_texture_size,
+                                    &processed_width, &processed_height ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data\n" );
+            return false;
+        }
+        
+        // Write processed texture size and data
+        if ( 1 != fwrite( &processed_texture_size, sizeof( uint32_t ), 1, output_file ) ) {
+            free( processed_texture_data );
+            return false;
+        }
+        if ( processed_texture_size != fwrite( processed_texture_data, sizeof( uint8_t ), processed_texture_size, output_file ) ) {
+            free( processed_texture_data );
+            return false;
+        }
+        
+        free( processed_texture_data );
     }
     
     // Write trailing mesh data size (should match frame header mesh_data_sz)
@@ -392,7 +529,14 @@ static bool _write_frame_data( FILE* output_file, const vol_geom_frame_data_t* f
     
     // Add texture data if present
     if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        trailing_mesh_data_sz += frame_data->texture_sz; // texture data
+        // Calculate the size of processed texture data
+        uint32_t processed_texture_size = frame_data->texture_sz;
+        if ( _texture_width > 0 && _texture_height > 0 && 
+             geom_info->hdr.version >= 13 && geom_info->hdr.texture_container_format == 1 ) {
+            // If we're resizing a BASIS texture to raw format, calculate new size
+            processed_texture_size = _texture_width * _texture_height * 4; // RGBA
+        }
+        trailing_mesh_data_sz += processed_texture_size; // texture data
     }
     
     // For version 12+, add size fields to mesh_data_sz
@@ -462,6 +606,20 @@ static bool _process_vologram( void ) {
     
     // Write header with modifications
     vol_geom_file_hdr_t modified_hdr = _geom_info.hdr;
+    
+    // Update texture dimensions and format if resizing is requested
+    if ( _texture_width > 0 && _texture_height > 0 && modified_hdr.textured ) {
+        modified_hdr.texture_width = _texture_width;
+        modified_hdr.texture_height = _texture_height;
+        
+        // If we're resizing a BASIS texture, output will be raw format
+        if ( modified_hdr.version >= 13 && modified_hdr.texture_container_format == 1 ) {
+            modified_hdr.texture_container_format = 0; // Raw format
+            modified_hdr.texture_compression = 0;      // No compression
+            _printlog( _LOG_TYPE_INFO, "Output texture format changed to raw due to resizing\n" );
+        }
+    }
+    
     if ( !_write_vols_header( output_file, &modified_hdr ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write output file header.\n" );
         fclose( output_file );
@@ -503,7 +661,7 @@ static bool _process_vologram( void ) {
         
         // Read current frame
         vol_geom_frame_data_t frame_data;
-        if ( key_idx != frame_idx ) {
+        if ( key_idx != (int)frame_idx ) {
             if ( !vol_geom_read_frame( sequence_filename, &_geom_info, frame_idx, &frame_data ) ) {
                 _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", frame_idx );
                 fclose( output_file );
@@ -534,7 +692,14 @@ static bool _process_vologram( void ) {
         
         // Add texture data if present
         if ( _geom_info.hdr.version >= 11 && _geom_info.hdr.textured && frame_data.texture_sz > 0 ) {
-            new_mesh_data_sz += frame_data.texture_sz; // texture data
+            // Calculate the size of processed texture data
+            uint32_t processed_texture_size = frame_data.texture_sz;
+            if ( _texture_width > 0 && _texture_height > 0 && 
+                 _geom_info.hdr.version >= 13 && _geom_info.hdr.texture_container_format == 1 ) {
+                // If we're resizing a BASIS texture to raw format, calculate new size
+                processed_texture_size = _texture_width * _texture_height * 4; // RGBA
+            }
+            new_mesh_data_sz += processed_texture_size; // texture data
         }
         
         // For version 12+, add size fields to mesh_data_sz
@@ -638,6 +803,32 @@ int main( int argc, char** argv ) {
     
     // Set processing options
     _no_normals = _option_arg_indices[CL_NO_NORMALS] > 0;
+    
+    // Parse texture size option
+    if ( _option_arg_indices[CL_TEXTURE_SIZE] ) {
+        const char* texture_size_str = my_argv[_option_arg_indices[CL_TEXTURE_SIZE] + 1];
+        if ( sscanf( texture_size_str, "%dx%d", &_texture_width, &_texture_height ) != 2 ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Invalid texture size format '%s'. Use WIDTHxHEIGHT (e.g., 512x512).\n", texture_size_str );
+            return 1;
+        }
+        if ( _texture_width <= 0 || _texture_height <= 0 ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Texture dimensions must be positive integers.\n" );
+            return 1;
+        }
+        if ( _texture_width > 8192 || _texture_height > 8192 ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Texture dimensions cannot exceed 8192x8192.\n" );
+            return 1;
+        }
+        _printlog( _LOG_TYPE_INFO, "Texture will be resized to %dx%d\n", _texture_width, _texture_height );
+    }
+    
+    // Initialize BASIS Universal encoder if texture resizing is requested
+    if ( _texture_width > 0 && _texture_height > 0 ) {
+        if ( !basis_encoder_init_wrapper() ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to initialize BASIS Universal encoder\n" );
+            return 1;
+        }
+    }
     
     // Process the vologram
     if ( !_process_vologram() ) {
