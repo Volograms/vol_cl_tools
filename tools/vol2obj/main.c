@@ -805,6 +805,7 @@ int main( int argc, char** argv ) {
     { // Register any user-set options.
       if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
         printf(
+          "VOL to OBJ version 0.8.1\n"
           "Usage for single-file volograms:\n"
           "%s [OPTIONS] -c MYFILE.VOLS\n\n"
           "Usage for multi-file volograms:\n"

@@ -23,7 +23,7 @@ STA_LIB_GL  =
 DYN_LIB_AV  = -lavcodec -lavdevice -lavformat -lavutil -lswscale
 LIB_DIR     = -L ./
 BIN_EXT     = .bin
-CLEAN_CMD   = rm -f *.bin *.o lib/*.o thirdparty/basis_universal/*.o
+CLEAN_CMD   = rm -f *.bin *.o lib/*.o thirdparty/basis_universal/*.o tools/vol2obj/*.o tools/vol2vol/*.o
 
 ifeq ($(OS),Windows_NT)
 	CC         = GCC
@@ -36,7 +36,7 @@ ifeq ($(OS),Windows_NT)
 	LIB_DIR_AV = ./thirdparty/ffmpeg/lib/vs/x64/
 	LIB_DIR   += -L $(LIB_DIR_AV)
 	STA_LIB_AV = $(LIB_DIR_AV)avcodec.lib $(LIB_DIR_AV)avdevice.lib $(LIB_DIR_AV)avformat.lib $(LIB_DIR_AV)avutil.lib $(LIB_DIR_AV)swscale.lib 
-	CLEAN_CMD  = del /Q *.bin *.o lib\*.o thirdparty\basis_universal\*.o
+	CLEAN_CMD  = del /Q *.bin *.o lib\*.o thirdparty\basis_universal\*.o tools\vol2obj\*.o tools\vol2vol\*.o
 else
 	DYN_LIB_AV  += -lm
 	UNAME_S      = $(shell uname -s)
@@ -47,7 +47,7 @@ else
 	endif
 endif
 
-all: vol2obj
+all: vol2obj vol2vol
 
 thirdparty/basis_universal/basisu_transcoder.o:
 	$(CPP) $(FLAGSCPP) -m64 -Wfatal-errors $(DEBUG) $(SANS) -fno-strict-aliasing -DBASISD_SUPPORT_KTX2=0 -o thirdparty/basis_universal/basisu_transcoder.o -c thirdparty/basis_universal/transcoder/basisu_transcoder.cpp $(INC_DIR)
@@ -64,6 +64,10 @@ lib/vol_av.o:
 vol2obj: thirdparty/basis_universal/basisu_transcoder.o lib/vol_basis.o lib/vol_geom.o lib/vol_av.o
 	$(CC) $(FLAGSC) $(FLAGS) $(DEBUG) $(SANS) -o tools/vol2obj/vol2obj.o -c tools/vol2obj/main.c $(INC_DIR)
 	$(CPP) $(FLAGSCPP) $(FLAGS) $(DEBUG) $(SANS) -o vol2obj$(BIN_EXT) tools/vol2obj/vol2obj.o thirdparty/basis_universal/basisu_transcoder.o lib/vol_av.o lib/vol_basis.o lib/vol_geom.o $(INC_DIR) $(STA_LIB_AV) $(LIB_DIR) $(DYN_LIB_AV)
+
+vol2vol: thirdparty/basis_universal/basisu_transcoder.o lib/vol_basis.o lib/vol_geom.o lib/vol_av.o
+	$(CC) $(FLAGSC) $(FLAGS) $(DEBUG) $(SANS) -o tools/vol2vol/vol2vol.o -c tools/vol2vol/main.c $(INC_DIR)
+	$(CPP) $(FLAGSCPP) $(FLAGS) $(DEBUG) $(SANS) -o vol2vol$(BIN_EXT) tools/vol2vol/vol2vol.o thirdparty/basis_universal/basisu_transcoder.o lib/vol_av.o lib/vol_basis.o lib/vol_geom.o $(INC_DIR) $(STA_LIB_AV) $(LIB_DIR) $(DYN_LIB_AV)
 
 .PHONY : clean
 clean:
