@@ -24,6 +24,8 @@
  *   --no-normals    Remove normals from the output vologram
  *   --texture-size  Resize texture to specified resolution (e.g., 512x512)
  *                   Uses BASIS Universal's high-quality resampling and preserves BASIS format
+ *   --start-frame   Start frame for trimming (0-based, inclusive). Audio automatically trimmed to match.
+ *   --end-frame     End frame for trimming (0-based, inclusive). Audio automatically trimmed to match.
  *   --help          Show this help message
  *
  * Compilation
@@ -36,6 +38,13 @@
 #include "vol_basis.h" // Volograms' Basis Universal wrapper library.
 #include "vol_geom.h"  // Volograms' .vols file parsing library.
 #include "basis_encoder_wrapper.h" // BASIS Universal encoder C wrapper.
+
+// FFmpeg includes for audio processing
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+#include <libavutil/avutil.h>
+#include <libavutil/mem.h>
+#include <libavutil/error.h>
 
 #include <assert.h>
 #include <stdarg.h>
@@ -113,8 +122,8 @@ static cl_flag_t _cl_flags[CL_MAX] = {
     { "--video", "-v", "Video texture file (for multi-file volograms).\n", 1 },
     { "--no-normals", "-n", "Remove normals from the output vologram.\n", 0 },
     { "--texture-size", "-t", "Resize texture to specified resolution (e.g., 512x512).\n", 1 },
-    { "--start-frame", "-sf", "Start frame for video cutting (0-based, inclusive).\n", 1 },
-    { "--end-frame", "-ef", "End frame for video cutting (0-based, inclusive).\n", 1 },
+    { "--start-frame", "-sf", "Start frame for trimming (0-based, inclusive). Audio automatically trimmed to match.\n", 1 },
+    { "--end-frame", "-ef", "End frame for trimming (0-based, inclusive). Audio automatically trimmed to match.\n", 1 },
     { "--help", NULL, "Show this help message.\n", 0 }
 };
 
@@ -405,6 +414,313 @@ static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture
     }
 }
 
+/**
+ * Custom I/O context for reading from memory buffer
+ */
+typedef struct {
+    uint8_t* data;
+    size_t size;
+    size_t pos;
+} memory_buffer_t;
+
+/**
+ * Custom read function for FFmpeg AVIO context
+ */
+static int _read_memory_buffer(void* opaque, uint8_t* buf, int buf_size) {
+    memory_buffer_t* mem_buf = (memory_buffer_t*)opaque;
+    if (mem_buf->pos >= mem_buf->size) {
+        return AVERROR_EOF;
+    }
+    
+    size_t bytes_to_read = buf_size;
+    if (mem_buf->pos + bytes_to_read > mem_buf->size) {
+        bytes_to_read = mem_buf->size - mem_buf->pos;
+    }
+    
+    memcpy(buf, mem_buf->data + mem_buf->pos, bytes_to_read);
+    mem_buf->pos += bytes_to_read;
+    
+    return (int)bytes_to_read;
+}
+
+/**
+ * Custom seek function for FFmpeg AVIO context
+ */
+static int64_t _seek_memory_buffer(void* opaque, int64_t offset, int whence) {
+    memory_buffer_t* mem_buf = (memory_buffer_t*)opaque;
+    
+    int64_t new_pos = 0;
+    switch (whence) {
+        case SEEK_SET:
+            new_pos = offset;
+            break;
+        case SEEK_CUR:
+            new_pos = mem_buf->pos + offset;
+            break;
+        case SEEK_END:
+            new_pos = mem_buf->size + offset;
+            break;
+        case AVSEEK_SIZE:
+            return mem_buf->size;
+        default:
+            return AVERROR(EINVAL);
+    }
+    
+    if (new_pos < 0 || new_pos > (int64_t)mem_buf->size) {
+        return AVERROR(EINVAL);
+    }
+    
+    mem_buf->pos = (size_t)new_pos;
+    return new_pos;
+}
+
+/**
+ * Custom write function for output buffer
+ */
+typedef struct {
+    uint8_t* data;
+    size_t size;
+    size_t capacity;
+} output_buffer_t;
+
+static int _write_output_buffer(void* opaque, uint8_t* buf, int buf_size) {
+    output_buffer_t* out_buf = (output_buffer_t*)opaque;
+    
+    // Expand buffer if needed
+    while (out_buf->size + buf_size > out_buf->capacity) {
+        out_buf->capacity = out_buf->capacity ? out_buf->capacity * 2 : 4096;
+        out_buf->data = realloc(out_buf->data, out_buf->capacity);
+        if (!out_buf->data) {
+            return AVERROR(ENOMEM);
+        }
+    }
+    
+    memcpy(out_buf->data + out_buf->size, buf, buf_size);
+    out_buf->size += buf_size;
+    
+    return buf_size;
+}
+
+/**
+ * Process audio data - trim MP3 audio to match frame range
+ * 
+ * @param audio_data         Input MP3 audio data
+ * @param audio_size         Size of input audio data
+ * @param fps               Frames per second for time calculation
+ * @param start_frame       Start frame for trimming
+ * @param end_frame         End frame for trimming
+ * @param output_data_ptr   Pointer to store output audio data (will be allocated)
+ * @param output_size_ptr   Pointer to store output audio size
+ * @return                  True on success, false on error
+ */
+static bool _process_audio_data( const uint8_t* audio_data, uint32_t audio_size,
+                                float fps, int start_frame, int end_frame,
+                                uint8_t** output_data_ptr, uint32_t* output_size_ptr ) {
+    if ( !audio_data || !audio_size || fps <= 0 || start_frame < 0 || end_frame < start_frame || 
+         !output_data_ptr || !output_size_ptr ) {
+        return false;
+    }
+    
+    // Initialize output parameters
+    *output_data_ptr = NULL;
+    *output_size_ptr = 0;
+    
+    // Calculate timing
+    double start_time = (double)start_frame / fps;
+    double end_time = (double)(end_frame + 1) / fps;  // +1 to include the end frame
+    
+    _printlog( _LOG_TYPE_INFO, "Trimming audio from %.3f to %.3f seconds (frames %d to %d)\n", 
+              start_time, end_time, start_frame, end_frame );
+    
+    // Set up input memory buffer
+    memory_buffer_t input_mem_buf = { (uint8_t*)audio_data, audio_size, 0 };
+    
+    // Create custom I/O context for input
+    uint8_t* avio_buffer = av_malloc(4096);
+    if (!avio_buffer) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate AVIO buffer\n" );
+        return false;
+    }
+    
+    AVIOContext* input_avio = avio_alloc_context(avio_buffer, 4096, 0, &input_mem_buf, 
+                                                 _read_memory_buffer, NULL, _seek_memory_buffer);
+    if (!input_avio) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create input AVIO context\n" );
+        av_free(avio_buffer);
+        return false;
+    }
+    
+    // Create input format context
+    AVFormatContext* input_fmt_ctx = avformat_alloc_context();
+    if (!input_fmt_ctx) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate input format context\n" );
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    input_fmt_ctx->pb = input_avio;
+    
+    // Open input
+    if (avformat_open_input(&input_fmt_ctx, NULL, NULL, NULL) < 0) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open input audio stream\n" );
+        avformat_free_context(input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Find stream info
+    if (avformat_find_stream_info(input_fmt_ctx, NULL) < 0) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to find stream info\n" );
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Find audio stream
+    int audio_stream_idx = -1;
+    for (unsigned int i = 0; i < input_fmt_ctx->nb_streams; i++) {
+        if (input_fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            audio_stream_idx = i;
+            break;
+        }
+    }
+    
+    if (audio_stream_idx == -1) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: No audio stream found\n" );
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Set up output buffer
+    output_buffer_t output_buf = { NULL, 0, 0 };
+    
+    // Create custom I/O context for output
+    uint8_t* output_avio_buffer = av_malloc(4096);
+    if (!output_avio_buffer) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate output AVIO buffer\n" );
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    AVIOContext* output_avio = avio_alloc_context(output_avio_buffer, 4096, 1, &output_buf, 
+                                                  NULL, _write_output_buffer, NULL);
+    if (!output_avio) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create output AVIO context\n" );
+        av_free(output_avio_buffer);
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Create output format context
+    AVFormatContext* output_fmt_ctx = NULL;
+    if (avformat_alloc_output_context2(&output_fmt_ctx, NULL, "mp3", NULL) < 0) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create output format context\n" );
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    output_fmt_ctx->pb = output_avio;
+    
+    // Copy stream from input to output
+    AVStream* input_stream = input_fmt_ctx->streams[audio_stream_idx];
+    AVStream* output_stream = avformat_new_stream(output_fmt_ctx, NULL);
+    if (!output_stream) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create output stream\n" );
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Copy codec parameters
+    if (avcodec_parameters_copy(output_stream->codecpar, input_stream->codecpar) < 0) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to copy codec parameters\n" );
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Write output header
+    if (avformat_write_header(output_fmt_ctx, NULL) < 0) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write output header\n" );
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        avio_context_free(&input_avio);
+        return false;
+    }
+    
+    // Seek to start time
+    int64_t start_timestamp = av_rescale_q(start_time * AV_TIME_BASE, AV_TIME_BASE_Q, 
+                                          input_stream->time_base);
+    if (av_seek_frame(input_fmt_ctx, audio_stream_idx, start_timestamp, AVSEEK_FLAG_BACKWARD) < 0) {
+        _printlog( _LOG_TYPE_WARNING, "WARNING: Failed to seek to start time, processing from beginning\n" );
+    }
+    
+    // Process packets
+    AVPacket packet;
+    av_init_packet(&packet);
+    
+    int64_t end_timestamp = av_rescale_q(end_time * AV_TIME_BASE, AV_TIME_BASE_Q, 
+                                        input_stream->time_base);
+    
+    while (av_read_frame(input_fmt_ctx, &packet) >= 0) {
+        if (packet.stream_index == audio_stream_idx) {
+            // Check if packet is within our time range
+            if (packet.pts != AV_NOPTS_VALUE) {
+                if (packet.pts >= start_timestamp && packet.pts <= end_timestamp) {
+                    // Adjust packet stream index and timestamps for output
+                    packet.stream_index = 0;
+                    av_packet_rescale_ts(&packet, input_stream->time_base, output_stream->time_base);
+                    
+                    // Write packet to output
+                    if (av_write_frame(output_fmt_ctx, &packet) < 0) {
+                        _printlog( _LOG_TYPE_WARNING, "WARNING: Failed to write audio packet\n" );
+                    }
+                } else if (packet.pts > end_timestamp) {
+                    // We've passed our end time, stop processing
+                    av_packet_unref(&packet);
+                    break;
+                }
+            }
+        }
+        av_packet_unref(&packet);
+    }
+    
+    // Write trailer
+    av_write_trailer(output_fmt_ctx);
+    
+    // Set output data
+    if (output_buf.size > 0) {
+        *output_data_ptr = output_buf.data;
+        *output_size_ptr = (uint32_t)output_buf.size;
+        
+        _printlog( _LOG_TYPE_INFO, "Successfully trimmed audio from %u bytes to %u bytes\n", 
+                  audio_size, *output_size_ptr );
+    } else {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: No output audio data generated\n" );
+        if (output_buf.data) {
+            free(output_buf.data);
+        }
+    }
+    
+    // Cleanup
+    avformat_free_context(output_fmt_ctx);
+    avio_context_free(&output_avio);
+    avformat_close_input(&input_fmt_ctx);
+    avio_context_free(&input_avio);
+    
+    return (*output_data_ptr != NULL);
+}
+
 
 /**
  * Write a vols file header to the output file
@@ -684,6 +1000,33 @@ static bool _process_vologram( void ) {
         return false;
     }
     
+    // Process audio data first to determine final audio size
+    uint8_t* processed_audio_data = NULL;
+    uint32_t processed_audio_size = 0;
+    bool audio_allocated = false;
+    
+    if ( _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
+        // Process audio if frame range is specified (automatic audio trimming)
+        if ( _start_frame > 0 || _end_frame < (int)_geom_info.hdr.frame_count - 1 ) {
+            _printlog( _LOG_TYPE_INFO, "Automatically trimming audio to match frame range %d to %d\n", _start_frame, _end_frame );
+            
+            if ( _process_audio_data( _geom_info.audio_data_ptr, _geom_info.audio_data_sz,
+                                     _geom_info.hdr.fps, _start_frame, _end_frame,
+                                     &processed_audio_data, &processed_audio_size ) ) {
+                audio_allocated = true;
+                _printlog( _LOG_TYPE_SUCCESS, "Successfully trimmed audio to match frames\n" );
+            } else {
+                _printlog( _LOG_TYPE_WARNING, "WARNING: Failed to trim audio, using original\n" );
+                processed_audio_data = _geom_info.audio_data_ptr;
+                processed_audio_size = _geom_info.audio_data_sz;
+            }
+        } else {
+            // Use original audio data (no frame trimming)
+            processed_audio_data = _geom_info.audio_data_ptr;
+            processed_audio_size = _geom_info.audio_data_sz;
+        }
+    }
+    
     // Write header with modifications
     vol_geom_file_hdr_t modified_hdr = _geom_info.hdr;
     
@@ -703,25 +1046,64 @@ static bool _process_vologram( void ) {
         }
     }
     
+    // Calculate correct frame_body_start offset for version 13+ with audio
+    if ( modified_hdr.version >= 13 && _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
+        // Calculate v13 header size: 
+        // format(4) + version(4) + compression(4) + frame_count(4) + normals(1) + textured(1) +
+        // texture_compression(1) + texture_container_format(1) + texture_width(4) + texture_height(4) +
+        // fps(4) + audio(4) + audio_start(4) + frame_body_start(4) = 44 bytes
+        uint32_t header_size = 44;
+        
+        // Frame body starts after: header + audio_size_field + audio_data
+        modified_hdr.frame_body_start = header_size + sizeof(uint32_t) + processed_audio_size;
+        
+        // Update audio_start to point right after header
+        modified_hdr.audio_start = header_size;
+        
+        _printlog( _LOG_TYPE_INFO, "Audio processing: original size %u -> processed size %u\n", 
+                  _geom_info.audio_data_sz, processed_audio_size );
+        _printlog( _LOG_TYPE_INFO, "Updated header offsets - audio_start: %u, frame_body_start: %u\n", 
+                  modified_hdr.audio_start, modified_hdr.frame_body_start );
+    }
+    
     if ( !_write_vols_header( output_file, &modified_hdr ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write output file header.\n" );
+        if ( audio_allocated ) free( processed_audio_data );
         fclose( output_file );
         return false;
     }
     
-    // Write audio data if present
+    long header_end_pos = ftell( output_file );
+    _printlog( _LOG_TYPE_INFO, "Header written, file position: %ld\n", header_end_pos );
+    
+    // Write audio data if present (already processed above)
     if ( _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
-        if ( 1 != fwrite( &_geom_info.audio_data_sz, sizeof( uint32_t ), 1, output_file ) ) {
+        _printlog( _LOG_TYPE_INFO, "Writing audio data to file...\n" );
+        // Write processed audio data
+        if ( 1 != fwrite( &processed_audio_size, sizeof( uint32_t ), 1, output_file ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data size.\n" );
+            if ( audio_allocated ) free( processed_audio_data );
             fclose( output_file );
             return false;
         }
-        if ( _geom_info.audio_data_sz != fwrite( _geom_info.audio_data_ptr, sizeof( uint8_t ), 
-                                                _geom_info.audio_data_sz, output_file ) ) {
+        if ( processed_audio_size != fwrite( processed_audio_data, sizeof( uint8_t ), 
+                                            processed_audio_size, output_file ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data.\n" );
+            if ( audio_allocated ) free( processed_audio_data );
             fclose( output_file );
             return false;
         }
+        
+        // Free processed audio data if it was allocated
+        if ( audio_allocated ) {
+            free( processed_audio_data );
+        }
+        
+        long audio_end_pos = ftell( output_file );
+        _printlog( _LOG_TYPE_INFO, "Audio data written, file position: %ld (should match frame_body_start: %u)\n", 
+                  audio_end_pos, modified_hdr.frame_body_start );
+    } else {
+        _printlog( _LOG_TYPE_INFO, "No audio data to write\n" );
     }
     
     // Process each frame in the selected range
