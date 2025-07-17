@@ -3,17 +3,27 @@
 
 #include "basis_universal/encoder/basisu_enc.h"
 #include "basis_universal/encoder/basisu_comp.h"
+#include "basis_universal/encoder/basisu_opencl.h"
 #include <cstring>
 #include <cstdlib>
 
 extern "C" {
 
+// Global state to track OpenCL availability
+static bool g_opencl_initialized = false;
+static bool g_opencl_available = false;
+
 /**
- * Initialize BASIS Universal encoder
+ * Initialize BASIS Universal encoder with OpenCL support
  */
-bool basis_encoder_init_wrapper(void) {
+bool basis_encoder_init_wrapper(bool use_opencl) {
     try {
-        basisu::basisu_encoder_init();
+        // Initialize BASIS Universal encoder with OpenCL support
+        basisu::basisu_encoder_init(use_opencl);
+        
+        g_opencl_initialized = use_opencl;
+        g_opencl_available = use_opencl && basisu::opencl_is_available();
+        
         return true;
     } catch (...) {
         return false;
@@ -21,7 +31,14 @@ bool basis_encoder_init_wrapper(void) {
 }
 
 /**
- * Encode RGBA texture data to BASIS format with resizing
+ * Check if OpenCL is available and working
+ */
+bool basis_encoder_opencl_available(void) {
+    return g_opencl_available;
+}
+
+/**
+ * Encode RGBA texture data to BASIS format with resizing and OpenCL acceleration
  * 
  * @param rgba_data    Input RGBA texture data (4 bytes per pixel)
  * @param src_width    Source texture width
@@ -29,12 +46,13 @@ bool basis_encoder_init_wrapper(void) {
  * @param dst_width    Destination texture width (0 = no resize)
  * @param dst_height   Destination texture height (0 = no resize)
  * @param use_uastc    True for UASTC format, false for ETC1S
+ * @param use_opencl   True to use OpenCL acceleration (if available), false for CPU only
  * @param output_data  Pointer to store output BASIS data (caller must free)
  * @param output_size  Pointer to store output BASIS data size
  * @return             True on success, false on error
  */
 bool basis_encode_texture_with_resize(const uint8_t* rgba_data, int src_width, int src_height,
-                                      int dst_width, int dst_height, bool use_uastc,
+                                      int dst_width, int dst_height, bool use_uastc, bool use_opencl,
                                       uint8_t** output_data, uint32_t* output_size) {
     if (!rgba_data || !output_data || !output_size || src_width <= 0 || src_height <= 0) {
         return false;
@@ -60,6 +78,12 @@ bool basis_encode_texture_with_resize(const uint8_t* rgba_data, int src_width, i
         
         // Set compression format
         params.m_uastc = use_uastc;
+        
+        // Enable OpenCL if requested and available
+        if (use_opencl && g_opencl_available) {
+            params.m_use_opencl = true;
+            // Note: OpenCL context will be created automatically by BASIS Universal
+        }
         
         // Set quality for better results
         if (use_uastc) {
@@ -98,6 +122,7 @@ bool basis_encode_texture_with_resize(const uint8_t* rgba_data, int src_width, i
         }
         
         memcpy(*output_data, output_basis_file.data(), *output_size);
+        
         return true;
         
     } catch (...) {

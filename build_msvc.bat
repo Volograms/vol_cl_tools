@@ -11,13 +11,25 @@ REM call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Enterprise\VC\Auxi
 
 REM "we recommend you compile by using either the /W3 or /W4 warning level"
 REM C4221 is nonstandard extension used in struct literals.
-set COMPILER_FLAGS=/W4 /D_CRT_SECURE_NO_WARNINGS /wd4221 /DBASISD_SUPPORT_KTX2=1 /DBASISD_SUPPORT_KTX2_ZSTD=1 /DZSTD_DISABLE_ASM
+echo Using local OpenCL installation from thirdparty/basis_universal/OpenCL
+set COMPILER_FLAGS=/W4 /D_CRT_SECURE_NO_WARNINGS /wd4221 /DBASISD_SUPPORT_KTX2=1 /DBASISD_SUPPORT_KTX2_ZSTD=1 /DZSTD_DISABLE_ASM /DBASISU_SUPPORT_OPENCL=1
 set LIBS= ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avcodec.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avdevice.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avformat.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avutil.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\swscale.lib
+
+REM vol2vol libraries with OpenCL support
+set LIBS_VOL2VOL= ^
+..\thirdparty\ffmpeg\lib\vs\x64\avcodec.lib ^
+..\thirdparty\ffmpeg\lib\vs\x64\avdevice.lib ^
+..\thirdparty\ffmpeg\lib\vs\x64\avformat.lib ^
+..\thirdparty\ffmpeg\lib\vs\x64\avutil.lib ^
+..\thirdparty\ffmpeg\lib\vs\x64\swscale.lib ^
+..\thirdparty\basis_universal\OpenCL\lib\OpenCL64.lib
+
+REM OpenCL is now available locally in thirdparty/basis_universal/OpenCL
 
 set BUILD_DIR=".\build"
 if not exist %BUILD_DIR% mkdir %BUILD_DIR%
@@ -26,7 +38,8 @@ pushd %BUILD_DIR%
 set I=/I ..\lib\ ^
 /I ..\examples\common\ ^
 /I ..\thirdparty\ ^
-/I ..\thirdparty\ffmpeg\include\
+/I ..\thirdparty\ffmpeg\include\ ^
+/I ..\thirdparty\basis_universal\OpenCL
 
 REM Build vol2obj
 echo Building vol2obj...
@@ -75,12 +88,15 @@ set SRC_VOL2VOL= ^
 ..\thirdparty\basis_universal\encoder\pvpngreader.cpp ^
 ..\thirdparty\basis_universal\zstd\zstd.c
 
-cl %COMPILER_FLAGS% %SRC_VOL2VOL% %I% /link %LINKER_FLAGS_VOL2VOL% %LIBS%
+REM Build with OpenCL acceleration
+echo Building vol2vol with OpenCL acceleration...
+cl %COMPILER_FLAGS% %SRC_VOL2VOL% %I% /link %LINKER_FLAGS_VOL2VOL% %LIBS_VOL2VOL%
 if %errorlevel% neq 0 (
     echo Error building vol2vol
     pause
     exit /b %errorlevel%
 )
+echo vol2vol built successfully with OpenCL support!
 
 REM Copy executables and DLLs
 copy vol2obj.exe ..\
