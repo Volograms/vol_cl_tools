@@ -139,6 +139,64 @@ static uint8_t* _key_blob_ptr;
 static vol_geom_frame_data_t _key_frame_data;
 static int _prev_key_frame_loaded_idx = -1;
 
+// Structure to cache processed texture data
+typedef struct {
+    uint8_t* data;
+    uint32_t size;
+    uint32_t width;
+    uint32_t height;
+    bool processed;
+} processed_texture_cache_t;
+
+/**
+ * Calculate mesh data size based on version and frame data
+ * 
+ * @param geom_info           Geometry info
+ * @param frame_data          Frame data
+ * @param is_keyframe         Whether this is a keyframe
+ * @param processed_texture_size Size of processed texture data (0 if no texture)
+ * @return                    Calculated mesh data size
+ */
+static uint32_t _calculate_mesh_data_size( const vol_geom_info_t* geom_info,
+                                          const vol_geom_frame_data_t* frame_data,
+                                          bool is_keyframe,
+                                          uint32_t processed_texture_size ) {
+    // V10, 11 = Size of Vertices Data + Normals Data + Indices Data + UVs Data + Texture Data (WITHOUT size fields)
+    // V12+ = Size of Vertices Data + Normals Data + Indices Data + UVs Data + Texture Data + 4 Bytes for each "Size of Array"
+    uint32_t mesh_data_sz = frame_data->vertices_sz; // vertices data
+    
+    // Add normals if not removing them and version >= 11
+    if ( !_no_normals && geom_info->hdr.version >= 11 && geom_info->hdr.normals ) {
+        mesh_data_sz += frame_data->normals_sz; // normals data
+    }
+    
+    // Add keyframe-specific data
+    if ( is_keyframe ) {
+        mesh_data_sz += frame_data->indices_sz; // indices data
+        mesh_data_sz += frame_data->uvs_sz;     // UVs data
+    }
+    
+    // Add texture data if present
+    if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
+        mesh_data_sz += processed_texture_size; // texture data
+    }
+    
+    // For version 12+, add size fields to mesh_data_sz
+    if ( geom_info->hdr.version >= 12 ) {
+        mesh_data_sz += sizeof( uint32_t ); // vertices size field
+        if ( !_no_normals && geom_info->hdr.normals ) {
+            mesh_data_sz += sizeof( uint32_t ); // normals size field
+        }
+        if ( is_keyframe ) {
+            mesh_data_sz += 2 * sizeof( uint32_t ); // indices + UVs size fields
+        }
+        if ( geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
+            mesh_data_sz += sizeof( uint32_t ); // texture size field
+        }
+    }
+    
+    return mesh_data_sz;
+}
 
 /**
  * Print log messages with color formatting
@@ -424,38 +482,31 @@ static bool _write_frame_header( FILE* output_file, const vol_geom_frame_hdr_t* 
 }
 
 /**
- * Write frame data to the output file, applying modifications like removing normals
+ * Write a frame body to the output file
  */
-static bool _write_frame_data( FILE* output_file, const vol_geom_frame_data_t* frame_data, bool is_keyframe,
-                              const vol_geom_info_t* geom_info ) {
-    if ( !output_file || !frame_data || !geom_info ) {
+static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_info, 
+                              const vol_geom_frame_data_t* frame_data, bool is_keyframe,
+                              const processed_texture_cache_t* texture_cache ) {
+    if ( !output_file || !geom_info || !frame_data ) {
         return false;
     }
     
-    // Calculate total size of written data (includes all size fields)
-    uint32_t total_written_sz = sizeof( uint32_t ) + frame_data->vertices_sz; // vertices size field + data
-    
-    // Add normals if not removing them and version >= 11
+    // Calculate total written size for debugging
+    uint32_t total_written_sz = frame_data->vertices_sz;
     if ( !_no_normals && geom_info->hdr.version >= 11 && geom_info->hdr.normals ) {
-        total_written_sz += sizeof( uint32_t ) + frame_data->normals_sz; // normals size field + data
+        total_written_sz += frame_data->normals_sz;
     }
-    
-    // Add keyframe-specific data
     if ( is_keyframe ) {
-        total_written_sz += sizeof( uint32_t ) + frame_data->indices_sz; // indices size field + data
-        total_written_sz += sizeof( uint32_t ) + frame_data->uvs_sz;     // UVs size field + data
+        total_written_sz += frame_data->indices_sz + frame_data->uvs_sz;
     }
     
     // Add texture data if present
     if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        // Calculate the size of processed texture data
-        uint32_t processed_texture_size = frame_data->texture_sz;
-        if ( _texture_width > 0 && _texture_height > 0 && 
-             geom_info->hdr.version >= 13 && geom_info->hdr.texture_container_format == 1 ) {
-            // If we're resizing a BASIS texture to raw format, calculate new size
-            processed_texture_size = _texture_width * _texture_height * 4; // RGBA
+        if ( texture_cache && texture_cache->processed ) {
+            total_written_sz += sizeof( uint32_t ) + texture_cache->size;
+        } else {
+            total_written_sz += sizeof( uint32_t ) + frame_data->texture_sz;
         }
-        total_written_sz += sizeof( uint32_t ) + processed_texture_size; // texture size field + data
     }
     
     // Write vertices size and data
@@ -483,76 +534,29 @@ static bool _write_frame_data( FILE* output_file, const vol_geom_frame_data_t* f
                                           sizeof( uint8_t ), frame_data->uvs_sz, output_file ) ) return false;
     }
     
-    // Write texture size and data if present
+    // Write texture size and data if present (using cached data)
     if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        uint8_t* processed_texture_data = NULL;
-        uint32_t processed_texture_size = 0;
-        uint32_t processed_width = 0;
-        uint32_t processed_height = 0;
-        
-        // Process texture data (decode, resize if needed)
-        if ( !_process_texture_data( &frame_data->block_data_ptr[frame_data->texture_offset], 
-                                    frame_data->texture_sz, geom_info,
-                                    &processed_texture_data, &processed_texture_size,
-                                    &processed_width, &processed_height ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data\n" );
-            return false;
-        }
-        
-        // Write processed texture size and data
-        if ( 1 != fwrite( &processed_texture_size, sizeof( uint32_t ), 1, output_file ) ) {
-            free( processed_texture_data );
-            return false;
-        }
-        if ( processed_texture_size != fwrite( processed_texture_data, sizeof( uint8_t ), processed_texture_size, output_file ) ) {
-            free( processed_texture_data );
-            return false;
-        }
-        
-        free( processed_texture_data );
-    }
-    
-    // Write trailing mesh data size (should match frame header mesh_data_sz)
-    // We need to calculate this based on the version rules, not the total written size
-    uint32_t trailing_mesh_data_sz = frame_data->vertices_sz; // vertices data
-    
-    // Add normals if not removing them and version >= 11
-    if ( !_no_normals && geom_info->hdr.version >= 11 && geom_info->hdr.normals ) {
-        trailing_mesh_data_sz += frame_data->normals_sz; // normals data
-    }
-    
-    // Add keyframe-specific data
-    if ( is_keyframe ) {
-        trailing_mesh_data_sz += frame_data->indices_sz; // indices data
-        trailing_mesh_data_sz += frame_data->uvs_sz;     // UVs data
-    }
-    
-    // Add texture data if present
-    if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        // Calculate the size of processed texture data
-        uint32_t processed_texture_size = frame_data->texture_sz;
-        if ( _texture_width > 0 && _texture_height > 0 && 
-             geom_info->hdr.version >= 13 && geom_info->hdr.texture_container_format == 1 ) {
-            // If we're resizing a BASIS texture to raw format, calculate new size
-            processed_texture_size = _texture_width * _texture_height * 4; // RGBA
-        }
-        trailing_mesh_data_sz += processed_texture_size; // texture data
-    }
-    
-    // For version 12+, add size fields to mesh_data_sz
-    if ( geom_info->hdr.version >= 12 ) {
-        trailing_mesh_data_sz += sizeof( uint32_t ); // vertices size field
-        if ( !_no_normals && geom_info->hdr.normals ) {
-            trailing_mesh_data_sz += sizeof( uint32_t ); // normals size field
-        }
-        if ( is_keyframe ) {
-            trailing_mesh_data_sz += 2 * sizeof( uint32_t ); // indices + UVs size fields
-        }
-        if ( geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-            trailing_mesh_data_sz += sizeof( uint32_t ); // texture size field
+        if ( texture_cache && texture_cache->processed ) {
+            // Use cached processed texture data
+            if ( 1 != fwrite( &texture_cache->size, sizeof( uint32_t ), 1, output_file ) ) return false;
+            if ( texture_cache->size != fwrite( texture_cache->data, sizeof( uint8_t ), texture_cache->size, output_file ) ) return false;
+        } else {
+            // Fallback: write original texture data if not processed
+            if ( 1 != fwrite( &frame_data->texture_sz, sizeof( uint32_t ), 1, output_file ) ) return false;
+            if ( frame_data->texture_sz != fwrite( &frame_data->block_data_ptr[frame_data->texture_offset], 
+                                                  sizeof( uint8_t ), frame_data->texture_sz, output_file ) ) return false;
         }
     }
     
+    // Write trailing mesh data size using the helper function
+    uint32_t texture_size_for_calculation = 0;
+    if ( texture_cache && texture_cache->processed ) {
+        texture_size_for_calculation = texture_cache->size;
+    } else if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
+        texture_size_for_calculation = frame_data->texture_sz;
+    }
+    
+    uint32_t trailing_mesh_data_sz = _calculate_mesh_data_size( geom_info, frame_data, is_keyframe, texture_size_for_calculation );
     if ( 1 != fwrite( &trailing_mesh_data_sz, sizeof( uint32_t ), 1, output_file ) ) return false;
     
     return true;
@@ -607,16 +611,16 @@ static bool _process_vologram( void ) {
     // Write header with modifications
     vol_geom_file_hdr_t modified_hdr = _geom_info.hdr;
     
-    // Update texture dimensions and format if resizing is requested
+    // Update texture dimensions if resizing is requested
     if ( _texture_width > 0 && _texture_height > 0 && modified_hdr.textured ) {
         modified_hdr.texture_width = _texture_width;
         modified_hdr.texture_height = _texture_height;
         
-        // If we're resizing a BASIS texture, output will be raw format
+        // For BASIS textures, preserve the original format - don't change to raw
+        // The BASIS encoder will output proper BASIS format with new dimensions
         if ( modified_hdr.version >= 13 && modified_hdr.texture_container_format == 1 ) {
-            modified_hdr.texture_container_format = 0; // Raw format
-            modified_hdr.texture_compression = 0;      // No compression
-            _printlog( _LOG_TYPE_INFO, "Output texture format changed to raw due to resizing\n" );
+            _printlog( _LOG_TYPE_INFO, "Texture will be resized to %dx%d while preserving BASIS format\n", 
+                      _texture_width, _texture_height );
         }
     }
     
@@ -671,65 +675,44 @@ static bool _process_vologram( void ) {
             frame_data = _key_frame_data;
         }
         
-        // Create modified frame header
-        vol_geom_frame_hdr_t modified_frame_hdr = _geom_info.frame_headers_ptr[frame_idx];
-        
-        // Calculate new mesh data size based on version and modifications
-        // V10, 11 = Size of Vertices Data + Normals Data + Indices Data + UVs Data + Texture Data (WITHOUT size fields)
-        // V12+ = Size of Vertices Data + Normals Data + Indices Data + UVs Data + Texture Data + 4 Bytes for each "Size of Array"
-        uint32_t new_mesh_data_sz = frame_data.vertices_sz; // vertices data
-        
-        // Add normals if not removing them and version >= 11
-        if ( !_no_normals && _geom_info.hdr.version >= 11 && _geom_info.hdr.normals ) {
-            new_mesh_data_sz += frame_data.normals_sz; // normals data
-        }
-        
-        // Add keyframe-specific data
-        if ( is_keyframe ) {
-            new_mesh_data_sz += frame_data.indices_sz; // indices data
-            new_mesh_data_sz += frame_data.uvs_sz;     // UVs data
-        }
-        
-        // Add texture data if present
+        // Process texture data once per frame and cache results
+        processed_texture_cache_t texture_cache = { NULL, 0, 0, 0, false };
         if ( _geom_info.hdr.version >= 11 && _geom_info.hdr.textured && frame_data.texture_sz > 0 ) {
-            // Calculate the size of processed texture data
-            uint32_t processed_texture_size = frame_data.texture_sz;
-            if ( _texture_width > 0 && _texture_height > 0 && 
-                 _geom_info.hdr.version >= 13 && _geom_info.hdr.texture_container_format == 1 ) {
-                // If we're resizing a BASIS texture to raw format, calculate new size
-                processed_texture_size = _texture_width * _texture_height * 4; // RGBA
+            if ( !_process_texture_data( &frame_data.block_data_ptr[frame_data.texture_offset], 
+                                        frame_data.texture_sz, &_geom_info,
+                                        &texture_cache.data, &texture_cache.size,
+                                        &texture_cache.width, &texture_cache.height ) ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data for frame %i\n", frame_idx );
+                fclose( output_file );
+                return false;
             }
-            new_mesh_data_sz += processed_texture_size; // texture data
+            texture_cache.processed = true;
         }
         
-        // For version 12+, add size fields to mesh_data_sz
-        if ( _geom_info.hdr.version >= 12 ) {
-            new_mesh_data_sz += sizeof( uint32_t ); // vertices size field
-            if ( !_no_normals && _geom_info.hdr.normals ) {
-                new_mesh_data_sz += sizeof( uint32_t ); // normals size field
-            }
-            if ( is_keyframe ) {
-                new_mesh_data_sz += 2 * sizeof( uint32_t ); // indices + UVs size fields
-            }
-            if ( _geom_info.hdr.textured && frame_data.texture_sz > 0 ) {
-                new_mesh_data_sz += sizeof( uint32_t ); // texture size field
-            }
-        }
-        
+        // Create modified frame header using cached texture size
+        vol_geom_frame_hdr_t modified_frame_hdr = _geom_info.frame_headers_ptr[frame_idx];
+        uint32_t new_mesh_data_sz = _calculate_mesh_data_size( &_geom_info, &frame_data, is_keyframe, texture_cache.size );
         modified_frame_hdr.mesh_data_sz = new_mesh_data_sz;
         
         // Write frame header
         if ( !_write_frame_header( output_file, &modified_frame_hdr ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame %i header.\n", frame_idx );
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame header for frame %i.\n", frame_idx );
+            if ( texture_cache.data ) free( texture_cache.data );
             fclose( output_file );
             return false;
         }
         
-        // Write frame data
-        if ( !_write_frame_data( output_file, &frame_data, is_keyframe, &_geom_info ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame %i data.\n", frame_idx );
+        // Write frame body using cached texture data
+        if ( !_write_frame_body( output_file, &_geom_info, &frame_data, is_keyframe, &texture_cache ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame body for frame %i.\n", frame_idx );
+            if ( texture_cache.data ) free( texture_cache.data );
             fclose( output_file );
             return false;
+        }
+        
+        // Free cached texture data
+        if ( texture_cache.data ) {
+            free( texture_cache.data );
         }
         
         _printlog( _LOG_TYPE_INFO, "Processed frame %i/%i\n", frame_idx + 1, _geom_info.hdr.frame_count );
