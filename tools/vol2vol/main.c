@@ -143,7 +143,6 @@ static vol_av_video_t _av_info;
 
 // Working memory for keyframe data
 static vol_geom_frame_data_t _key_frame_data;
-static int _prev_key_frame_loaded_idx = -1;
 
 // Timing statistics for texture processing
 static double _total_texture_processing_time_ms = 0.0;
@@ -363,9 +362,7 @@ static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture
         // Calculate and log transcoding time
         clock_t transcode_end_time = clock();
         double transcode_time_ms = ((double)(transcode_end_time - transcode_start_time)) / CLOCKS_PER_SEC * 1000.0;
-        
-        _printlog( _LOG_TYPE_INFO, "Decoded BASIS texture: %dx%d in %.2f ms\n", src_width, src_height, transcode_time_ms );
-        
+                
         // Use BASIS Universal encoder for resizing and re-encoding
         // This preserves BASIS format and uses high-quality resampling
         bool use_uastc = (geom_info->hdr.texture_compression == 2);  // 2 = UASTC, 1 = ETC1S
@@ -393,9 +390,6 @@ static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture
         // Update output dimensions
         *output_width_ptr = _texture_width;
         *output_height_ptr = _texture_height;
-        
-        _printlog( _LOG_TYPE_INFO, "Successfully resized and re-encoded BASIS texture from %dx%d to %dx%d\n",
-                  src_width, src_height, _texture_width, _texture_height );
         
         return true;
     } else {
@@ -568,11 +562,6 @@ static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_in
             // Use cached processed texture data
             if ( 1 != fwrite( &texture_cache->size, sizeof( uint32_t ), 1, output_file ) ) return false;
             if ( texture_cache->size != fwrite( texture_cache->data, sizeof( uint8_t ), texture_cache->size, output_file ) ) return false;
-        } else {
-            // Fallback: write original texture data if not processed
-            if ( 1 != fwrite( &frame_data->texture_sz, sizeof( uint32_t ), 1, output_file ) ) return false;
-            if ( frame_data->texture_sz != fwrite( &frame_data->block_data_ptr[frame_data->texture_offset], 
-                                                  sizeof( uint8_t ), frame_data->texture_sz, output_file ) ) return false;
         }
     }
     
@@ -632,13 +621,6 @@ static bool _process_vologram( void ) {
         }
     }
     
-    if ( _geom_info.hdr.version < 13 ) {
-        _printlog( _LOG_TYPE_INFO, "Mesh name: %.*s\n", _geom_info.hdr.mesh_name.sz, _geom_info.hdr.mesh_name.bytes );
-        _printlog( _LOG_TYPE_INFO, "Material: %.*s\n", _geom_info.hdr.material.sz, _geom_info.hdr.material.bytes );
-        _printlog( _LOG_TYPE_INFO, "Shader: %.*s\n", _geom_info.hdr.shader.sz, _geom_info.hdr.shader.bytes );
-        _printlog( _LOG_TYPE_INFO, "Topology: %u\n", _geom_info.hdr.topology );
-    }
-    
     if ( _geom_info.hdr.version >= 12 && _geom_info.hdr.version < 13 ) {
         _printlog( _LOG_TYPE_INFO, "Translation: [%.3f, %.3f, %.3f]\n", 
                   _geom_info.hdr.translation[0], _geom_info.hdr.translation[1], _geom_info.hdr.translation[2] );
@@ -646,21 +628,7 @@ static bool _process_vologram( void ) {
                   _geom_info.hdr.rotation[0], _geom_info.hdr.rotation[1], _geom_info.hdr.rotation[2], _geom_info.hdr.rotation[3] );
         _printlog( _LOG_TYPE_INFO, "Scale: %.3f\n", _geom_info.hdr.scale );
     }
-    
-    if ( _geom_info.audio_data_ptr ) {
-        _printlog( _LOG_TYPE_INFO, "Audio data size: %u bytes\n", _geom_info.audio_data_sz );
-    }
-    
-    // Show frame header info for first few frames
-    _printlog( _LOG_TYPE_INFO, "\n=== FIRST FEW FRAME HEADERS ===\n" );
-    uint32_t frames_to_show = _geom_info.hdr.frame_count > 5 ? 5 : _geom_info.hdr.frame_count;
-    for ( uint32_t i = 0; i < frames_to_show; i++ ) {
-        vol_geom_frame_hdr_t* frame_hdr = &_geom_info.frame_headers_ptr[i];
-        _printlog( _LOG_TYPE_INFO, "Frame %u: number=%u, keyframe=%s, mesh_data_sz=%u\n", 
-                  i, frame_hdr->frame_number, frame_hdr->keyframe ? "yes" : "no", frame_hdr->mesh_data_sz );
-    }
-    _printlog( _LOG_TYPE_INFO, "============================\n\n" );
-    
+        
     // Validate and adjust frame range based on actual frame count
     uint32_t total_frames = _geom_info.hdr.frame_count;
     
@@ -693,7 +661,6 @@ static bool _process_vologram( void ) {
     if ( _start_frame > 0 || _end_frame < (int)total_frames - 1 ) {
         _printlog( _LOG_TYPE_INFO, "Frame range: %d to %d (exporting %u of %u frames)\n", 
                   _start_frame, _end_frame, export_frame_count, total_frames );
-        _printlog( _LOG_TYPE_INFO, "Frames will be renumbered sequentially starting from 0\n" );
     }
     
     // Initialize libraries based on version
@@ -742,56 +709,6 @@ static bool _process_vologram( void ) {
         return false;
     }
     
-    // Debug output: Show what was written to the output file
-    _printlog( _LOG_TYPE_INFO, "=== OUTPUT FILE DEBUG INFO ===\n" );
-    _printlog( _LOG_TYPE_INFO, "File format: %.*s\n", modified_hdr.format.sz, modified_hdr.format.bytes );
-    _printlog( _LOG_TYPE_INFO, "Version: %u\n", modified_hdr.version );
-    _printlog( _LOG_TYPE_INFO, "Compression: %u\n", modified_hdr.compression );
-    _printlog( _LOG_TYPE_INFO, "Total frames: %u (original was %u)\n", modified_hdr.frame_count, _geom_info.hdr.frame_count );
-    
-    if ( modified_hdr.version >= 11 ) {
-        _printlog( _LOG_TYPE_INFO, "Has normals: %s\n", modified_hdr.normals ? "yes" : "no" );
-        _printlog( _LOG_TYPE_INFO, "Has texture: %s\n", modified_hdr.textured ? "yes" : "no" );
-        _printlog( _LOG_TYPE_INFO, "Texture dimensions: %ux%u", modified_hdr.texture_width, modified_hdr.texture_height );
-        if ( _geom_info.hdr.texture_width != modified_hdr.texture_width || 
-             _geom_info.hdr.texture_height != modified_hdr.texture_height ) {
-            _printlog( _LOG_TYPE_INFO, " (original was %ux%u)", _geom_info.hdr.texture_width, _geom_info.hdr.texture_height );
-        }
-        _printlog( _LOG_TYPE_INFO, "\n" );
-        
-        if ( modified_hdr.version >= 13 ) {
-            _printlog( _LOG_TYPE_INFO, "Texture compression: %u\n", modified_hdr.texture_compression );
-            _printlog( _LOG_TYPE_INFO, "Texture container format: %u\n", modified_hdr.texture_container_format );
-            _printlog( _LOG_TYPE_INFO, "FPS: %.2f\n", modified_hdr.fps );
-            _printlog( _LOG_TYPE_INFO, "Has audio: %s\n", modified_hdr.audio ? "yes" : "no" );
-            _printlog( _LOG_TYPE_INFO, "Audio start: %u\n", modified_hdr.audio_start );
-            _printlog( _LOG_TYPE_INFO, "Frame body start: %u\n", modified_hdr.frame_body_start );
-        } else {
-            _printlog( _LOG_TYPE_INFO, "Texture format: %u\n", modified_hdr.texture_format );
-        }
-    }
-    
-    if ( modified_hdr.version < 13 ) {
-        _printlog( _LOG_TYPE_INFO, "Mesh name: %.*s\n", modified_hdr.mesh_name.sz, modified_hdr.mesh_name.bytes );
-        _printlog( _LOG_TYPE_INFO, "Material: %.*s\n", modified_hdr.material.sz, modified_hdr.material.bytes );
-        _printlog( _LOG_TYPE_INFO, "Shader: %.*s\n", modified_hdr.shader.sz, modified_hdr.shader.bytes );
-        _printlog( _LOG_TYPE_INFO, "Topology: %u\n", modified_hdr.topology );
-    }
-    
-    if ( modified_hdr.version >= 12 && modified_hdr.version < 13 ) {
-        _printlog( _LOG_TYPE_INFO, "Translation: [%.3f, %.3f, %.3f]\n", 
-                  modified_hdr.translation[0], modified_hdr.translation[1], modified_hdr.translation[2] );
-        _printlog( _LOG_TYPE_INFO, "Rotation: [%.3f, %.3f, %.3f, %.3f]\n", 
-                  modified_hdr.rotation[0], modified_hdr.rotation[1], modified_hdr.rotation[2], modified_hdr.rotation[3] );
-        _printlog( _LOG_TYPE_INFO, "Scale: %.3f\n", modified_hdr.scale );
-    }
-    
-    if ( _geom_info.audio_data_ptr ) {
-        _printlog( _LOG_TYPE_INFO, "Audio data size: %u bytes\n", _geom_info.audio_data_sz );
-    }
-    
-    _printlog( _LOG_TYPE_INFO, "============================\n\n" );
-    
     // Write audio data if present
     if ( _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
         if ( 1 != fwrite( &_geom_info.audio_data_sz, sizeof( uint32_t ), 1, output_file ) ) {
@@ -812,64 +729,58 @@ static bool _process_vologram( void ) {
     
     for ( uint32_t output_frame_idx = 0; output_frame_idx < export_frame_count; output_frame_idx++ ) {
         uint32_t input_frame_idx = (uint32_t)(_start_frame + output_frame_idx);
-        
-        int key_idx = vol_geom_find_previous_keyframe( &_geom_info, input_frame_idx );
-        bool is_keyframe = vol_geom_is_keyframe( &_geom_info, input_frame_idx );
-        
-        // Load keyframe data if needed
-        if ( _prev_key_frame_loaded_idx != key_idx ) {
-            if ( !vol_geom_read_frame( sequence_filename, &_geom_info, key_idx, &_key_frame_data ) ) {
-                _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
-                fclose( output_file );
-                return false;
-            }
-            _prev_key_frame_loaded_idx = key_idx;
-        }
-        
+
         // Read current frame
         vol_geom_frame_data_t frame_data;
-        if ( key_idx != (int)input_frame_idx ) {
-            if ( !vol_geom_read_frame( sequence_filename, &_geom_info, input_frame_idx, &frame_data ) ) {
-                _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", input_frame_idx );
+        if ( !vol_geom_read_frame( sequence_filename, &_geom_info, input_frame_idx, &frame_data ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", input_frame_idx );
+            fclose( output_file );
+            return false;
+        }
+
+        bool is_keyframe = vol_geom_is_keyframe( &_geom_info, input_frame_idx );
+        
+        // Process texture data once per frame and cache results
+        processed_texture_cache_t texture_cache = { NULL, 0, 0, 0, false };
+        if ( _geom_info.hdr.version >= 11 && _geom_info.hdr.textured && frame_data.texture_sz > 0 ) {
+            // Start timing overall texture processing
+            clock_t texture_start_time = clock();
+            
+            if ( !_process_texture_data( &frame_data.block_data_ptr[frame_data.texture_offset], 
+                                        frame_data.texture_sz, &_geom_info,
+                                        &texture_cache.data, &texture_cache.size,
+                                        &texture_cache.width, &texture_cache.height ) ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data for frame %i (input frame %u)\n", output_frame_idx, input_frame_idx );
                 fclose( output_file );
                 return false;
             }
-        } else {
-            frame_data = _key_frame_data;
+            texture_cache.processed = true;
+            
+            // Calculate and log total texture processing time
+            clock_t texture_end_time = clock();
+            double texture_time_ms = ((double)(texture_end_time - texture_start_time)) / CLOCKS_PER_SEC * 1000.0;
+            
+            // Accumulate timing statistics
+            _total_texture_processing_time_ms += texture_time_ms;
+            _texture_processing_frame_count++;
+            
+            // _printlog( _LOG_TYPE_INFO, "Frame %u texture processing completed in %.2f ms total\n", 
+            //           output_frame_idx, texture_time_ms );
         }
         
         // Special handling for first frame in range - must be a keyframe
         uint8_t* allocated_block = NULL;  // Track allocated memory for cleanup
-        if ( output_frame_idx == 0 && !is_keyframe ) {
-            _printlog( _LOG_TYPE_INFO, "Converting first frame in range (frame %u) to keyframe\n", input_frame_idx );
+        if ( (output_frame_idx == 0 || output_frame_idx == export_frame_count-1) && !is_keyframe ) {
 
-            _printlog( _LOG_TYPE_INFO, "=== KEYFRAME %u HEADER DEBUG ===\n", key_idx );
-            _printlog( _LOG_TYPE_INFO, "Input frame index: %u\n", key_idx );
-            _printlog( _LOG_TYPE_INFO, "Input frame vertices offset: %u\n", _key_frame_data.vertices_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame vertices size: %u\n", _key_frame_data.vertices_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame normals offset: %u\n", _key_frame_data.normals_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame normals size: %u\n", _key_frame_data.normals_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame indices offset: %u\n", _key_frame_data.indices_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame indices size: %u\n", _key_frame_data.indices_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame uvs offset: %u\n", _key_frame_data.uvs_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame uvs size: %u\n", _key_frame_data.uvs_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame texture offset: %u\n", _key_frame_data.texture_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame texture size: %u\n", _key_frame_data.texture_sz );
-            _printlog( _LOG_TYPE_INFO, "============================\n\n" );
+            int key_idx = vol_geom_find_previous_keyframe( &_geom_info, input_frame_idx );
 
-            _printlog( _LOG_TYPE_INFO, "=== FRAME %u HEADER DEBUG ===\n", input_frame_idx );
-            _printlog( _LOG_TYPE_INFO, "Input frame index: %u\n", input_frame_idx );
-            _printlog( _LOG_TYPE_INFO, "Input frame vertices offset: %u\n", frame_data.vertices_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame vertices size: %u\n", frame_data.vertices_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame normals offset: %u\n", frame_data.normals_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame normals size: %u\n", frame_data.normals_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame indices offset: %u\n", frame_data.indices_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame indices size: %u\n", frame_data.indices_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame uvs offset: %u\n", frame_data.uvs_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame uvs size: %u\n", frame_data.uvs_sz );
-            _printlog( _LOG_TYPE_INFO, "Input frame texture offset: %u\n", frame_data.texture_offset );
-            _printlog( _LOG_TYPE_INFO, "Input frame texture size: %u\n", frame_data.texture_sz );
-            _printlog( _LOG_TYPE_INFO, "============================\n\n" );
+            // Load keyframe data if needed
+            if ( !vol_geom_read_frame( sequence_filename, &_geom_info, key_idx, &_key_frame_data ) ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
+                if ( texture_cache.data ) free( texture_cache.data );
+                fclose( output_file );
+                return false;
+            }
 
             // Create a new combined data block:
             // - Vertices and normals from current frame
@@ -886,7 +797,7 @@ static bool _process_vologram( void ) {
             uint32_t uvs_size = sizeof(uint32_t) + _key_frame_data.uvs_sz;  // size field + data
             uint32_t texture_size = 0;
             if ( _geom_info.hdr.textured && _geom_info.hdr.version >= 11 ) {
-                texture_size = sizeof(uint32_t) + frame_data.texture_sz;  // size field + data
+                texture_size = sizeof(uint32_t) + texture_cache.size;  // size field + data
             }
             
             uint32_t total_size = vertices_size + normals_size + indices_size + uvs_size + texture_size;
@@ -895,10 +806,11 @@ static bool _process_vologram( void ) {
             allocated_block = malloc( total_size );
             if ( !allocated_block ) {
                 _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate memory for keyframe conversion\n" );
+                if ( texture_cache.data ) free( texture_cache.data );
                 fclose( output_file );
                 return false;
             }
-            
+
             uint32_t offset = 0;
             
             // Copy vertices (size + data)
@@ -932,14 +844,14 @@ static bool _process_vologram( void ) {
             frame_data.uvs_sz = _key_frame_data.uvs_sz;
             frame_data.uvs_offset = offset;
             offset += _key_frame_data.uvs_sz;
-            
+
             // Copy texture if present (size + data)
             if ( texture_size > 0 ) {
-                memcpy( &allocated_block[offset], &frame_data.texture_sz, sizeof(uint32_t) );
+                memcpy( &allocated_block[offset], &texture_cache.size, sizeof(uint32_t) );
                 offset += sizeof(uint32_t);
-                memcpy( &allocated_block[offset], &frame_data.block_data_ptr[frame_data.texture_offset], frame_data.texture_sz );
+                memcpy( &allocated_block[offset], texture_cache.data, texture_cache.size );
                 frame_data.texture_offset = offset;
-                offset += frame_data.texture_sz;
+                offset += texture_cache.size;
             }
             
             // Update frame_data to use the new block
@@ -948,36 +860,7 @@ static bool _process_vologram( void ) {
             
             is_keyframe = true;
         }
-        
-        // Process texture data once per frame and cache results
-        processed_texture_cache_t texture_cache = { NULL, 0, 0, 0, false };
-        if ( _geom_info.hdr.version >= 11 && _geom_info.hdr.textured && frame_data.texture_sz > 0 ) {
-            // Start timing overall texture processing
-            clock_t texture_start_time = clock();
-            
-            if ( !_process_texture_data( &frame_data.block_data_ptr[frame_data.texture_offset], 
-                                        frame_data.texture_sz, &_geom_info,
-                                        &texture_cache.data, &texture_cache.size,
-                                        &texture_cache.width, &texture_cache.height ) ) {
-                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data for frame %i (input frame %u)\n", output_frame_idx, input_frame_idx );
-                if ( allocated_block ) free( allocated_block );
-                fclose( output_file );
-                return false;
-            }
-            texture_cache.processed = true;
-            
-            // Calculate and log total texture processing time
-            clock_t texture_end_time = clock();
-            double texture_time_ms = ((double)(texture_end_time - texture_start_time)) / CLOCKS_PER_SEC * 1000.0;
-            
-            // Accumulate timing statistics
-            _total_texture_processing_time_ms += texture_time_ms;
-            _texture_processing_frame_count++;
-            
-            _printlog( _LOG_TYPE_INFO, "Frame %u texture processing completed in %.2f ms total\n", 
-                      output_frame_idx, texture_time_ms );
-        }
-        
+
         // Create modified frame header using cached texture size
         vol_geom_frame_hdr_t modified_frame_hdr = _geom_info.frame_headers_ptr[input_frame_idx];
         
@@ -986,29 +869,13 @@ static bool _process_vologram( void ) {
         
         if ( output_frame_idx == 0 && !modified_frame_hdr.keyframe) {
             modified_frame_hdr.keyframe = 1;
+        } else if ( output_frame_idx == export_frame_count-1 && !modified_frame_hdr.keyframe) {
+            modified_frame_hdr.keyframe = 2;
         }
         
         uint32_t new_mesh_data_sz = _calculate_mesh_data_size( &_geom_info, &frame_data, is_keyframe, texture_cache.size );
         modified_frame_hdr.mesh_data_sz = new_mesh_data_sz;
-        
-        // Debug output for each frame header
-        _printlog( _LOG_TYPE_INFO, "=== FRAME %u HEADER DEBUG ===\n", output_frame_idx );
-        _printlog( _LOG_TYPE_INFO, "Input frame index: %u\n", input_frame_idx );
-        _printlog( _LOG_TYPE_INFO, "Original frame number: %u -> Modified frame number: %u\n", 
-                  _geom_info.frame_headers_ptr[input_frame_idx].frame_number, modified_frame_hdr.frame_number );
-        _printlog( _LOG_TYPE_INFO, "Original keyframe: %s -> Modified keyframe: %s\n", 
-                  _geom_info.frame_headers_ptr[input_frame_idx].keyframe ? "yes" : "no", modified_frame_hdr.keyframe ? "yes" : "no" );
-        _printlog( _LOG_TYPE_INFO, "Original mesh_data_sz: %u -> Modified mesh_data_sz: %u\n", 
-                  _geom_info.frame_headers_ptr[input_frame_idx].mesh_data_sz, modified_frame_hdr.mesh_data_sz );
-        _printlog( _LOG_TYPE_INFO, "Frame data sizes: vertices=%u, normals=%u, indices=%u, uvs=%u, texture=%u\n", 
-                  frame_data.vertices_sz, frame_data.normals_sz, frame_data.indices_sz, frame_data.uvs_sz, frame_data.texture_sz );
-        if ( texture_cache.processed ) {
-            _printlog( _LOG_TYPE_INFO, "Processed texture size: %u (original was %u)\n", texture_cache.size, frame_data.texture_sz );
-        }
-        _printlog( _LOG_TYPE_INFO, "Key frame index: %d\n", key_idx );
-        _printlog( _LOG_TYPE_INFO, "===============================\n" );
-        
-        
+
         // Write frame header
         if ( !_write_frame_header( output_file, &modified_frame_hdr ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame header for frame %i (input frame %u).\n", output_frame_idx, input_frame_idx );
