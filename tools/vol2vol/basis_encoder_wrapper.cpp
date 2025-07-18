@@ -6,6 +6,7 @@
 #include "basis_universal/encoder/basisu_opencl.h"
 #include <cstring>
 #include <cstdlib>
+#include <thread>
 
 extern "C" {
 
@@ -47,12 +48,15 @@ bool basis_encoder_opencl_available(void) {
  * @param dst_height   Destination texture height (0 = no resize)
  * @param use_uastc    True for UASTC format, false for ETC1S
  * @param use_opencl   True to use OpenCL acceleration (if available), false for CPU only
+ * @param quality_level Basis Universal quality level (1-255).
+ * @param num_threads  Number of threads to use for encoding (0 = auto).
  * @param output_data  Pointer to store output BASIS data (caller must free)
  * @param output_size  Pointer to store output BASIS data size
  * @return             True on success, false on error
  */
 bool basis_encode_texture_with_resize(const uint8_t* rgba_data, int src_width, int src_height,
                                       int dst_width, int dst_height, bool use_uastc, bool use_opencl,
+                                      int quality_level, int num_threads,
                                       uint8_t** output_data, uint32_t* output_size) {
     if (!rgba_data || !output_data || !output_size || src_width <= 0 || src_height <= 0) {
         return false;
@@ -89,11 +93,13 @@ bool basis_encode_texture_with_resize(const uint8_t* rgba_data, int src_width, i
         if (use_uastc) {
             params.m_pack_uastc_flags = basisu::cPackUASTCLevelDefault;
         } else {
-            params.m_quality_level = 128; // Mid-range quality for ETC1S
+            params.m_quality_level = quality_level > 0 ? quality_level : 128; // Use default if not provided
         }
         
-        // Create job pool for multithreading (required by BASIS Universal)
-        basisu::job_pool jpool(4); // Use 4 threads for reasonable performance
+        // Create job pool for multithreading
+        unsigned int threads = (num_threads > 0) ? num_threads : std::thread::hardware_concurrency();
+        if (threads == 0) { threads = 1; } // Fallback for safety
+        basisu::job_pool jpool(threads);
         params.m_pJob_pool = &jpool;
         
         // Create and initialize compressor

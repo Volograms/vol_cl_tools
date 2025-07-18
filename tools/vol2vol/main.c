@@ -150,9 +150,6 @@ static int _end_frame = -1;      // -1 means no end frame limit
 static vol_geom_info_t _geom_info;
 static vol_av_video_t _av_info;
 
-// Working memory for keyframe data
-static vol_geom_frame_data_t _key_frame_data;
-
 // Timing statistics for texture processing
 static double _total_texture_processing_time_ms = 0.0;
 static uint32_t _texture_processing_frame_count = 0;
@@ -358,20 +355,13 @@ static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture
         
         // Transcode BASIS to RGBA32 (format 13)
         int src_width, src_height;
-        
-        // Start timing texture transcoding
-        clock_t transcode_start_time = clock();
-        
+                
         if ( !vol_basis_transcode( 13, (void*)texture_data, texture_size, rgba_data, rgba_buffer_size, &src_width, &src_height ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to transcode BASIS texture\n" );
             free( rgba_data );
             return false;
         }
-        
-        // Calculate and log transcoding time
-        clock_t transcode_end_time = clock();
-        double transcode_time_ms = ((double)(transcode_end_time - transcode_start_time)) / CLOCKS_PER_SEC * 1000.0;
-                
+  
         // Use BASIS Universal encoder for resizing and re-encoding
         // This preserves BASIS format and uses high-quality resampling
         bool use_uastc = (geom_info->hdr.texture_compression == 2);  // 2 = UASTC, 1 = ETC1S
@@ -381,6 +371,7 @@ static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture
         
         if ( !basis_encode_texture_with_resize( rgba_data, src_width, src_height,
                                                _texture_width, _texture_height, use_uastc, true,
+                                               192, 4,
                                                output_data_ptr, output_size_ptr ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to encode resized texture to BASIS format\n" );
             free( rgba_data );
@@ -896,6 +887,293 @@ static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_in
 }
 
 /**
+ * Print the file info
+ */
+static void _print_file_info( const vol_geom_info_t* geom_info ) {
+
+    // Debug output: Show what was read from the file
+    _printlog( _LOG_TYPE_INFO, "=== INPUT FILE DEBUG INFO ===\n" );
+    _printlog( _LOG_TYPE_INFO, "File format: %.*s\n", geom_info->hdr.format.sz, geom_info->hdr.format.bytes );
+    _printlog( _LOG_TYPE_INFO, "Version: %u\n", geom_info->hdr.version );
+    _printlog( _LOG_TYPE_INFO, "Compression: %u\n", geom_info->hdr.compression );
+    _printlog( _LOG_TYPE_INFO, "Total frames: %u\n", geom_info->hdr.frame_count );
+    
+    if ( geom_info->hdr.version >= 11 ) {
+        _printlog( _LOG_TYPE_INFO, "Has normals: %s\n", geom_info->hdr.normals ? "yes" : "no" );
+        _printlog( _LOG_TYPE_INFO, "Has texture: %s\n", geom_info->hdr.textured ? "yes" : "no" );
+        _printlog( _LOG_TYPE_INFO, "Texture dimensions: %ux%u\n", geom_info->hdr.texture_width, geom_info->hdr.texture_height );
+        
+        if ( geom_info->hdr.version >= 13 ) {
+            _printlog( _LOG_TYPE_INFO, "Texture compression: %u\n", geom_info->hdr.texture_compression );
+            _printlog( _LOG_TYPE_INFO, "Texture container format: %u\n", geom_info->hdr.texture_container_format );
+            _printlog( _LOG_TYPE_INFO, "FPS: %.2f\n", geom_info->hdr.fps );
+            _printlog( _LOG_TYPE_INFO, "Has audio: %s\n", geom_info->hdr.audio ? "yes" : "no" );
+            _printlog( _LOG_TYPE_INFO, "Audio start: %u\n", geom_info->hdr.audio_start );
+            _printlog( _LOG_TYPE_INFO, "Frame body start: %u\n", geom_info->hdr.frame_body_start );
+        } else {
+            _printlog( _LOG_TYPE_INFO, "Texture format: %u\n", geom_info->hdr.texture_format );
+        }
+    }
+    
+    if ( geom_info->hdr.version >= 12 && geom_info->hdr.version < 13 ) {
+        _printlog( _LOG_TYPE_INFO, "Translation: [%.3f, %.3f, %.3f]\n", 
+                  geom_info->hdr.translation[0], geom_info->hdr.translation[1], geom_info->hdr.translation[2] );
+        _printlog( _LOG_TYPE_INFO, "Rotation: [%.3f, %.3f, %.3f, %.3f]\n", 
+                  geom_info->hdr.rotation[0], geom_info->hdr.rotation[1], geom_info->hdr.rotation[2], geom_info->hdr.rotation[3] );
+        _printlog( _LOG_TYPE_INFO, "Scale: %.3f\n", geom_info->hdr.scale );
+    }
+}
+
+/**
+ * Process the audio data
+ */
+static bool _process_audio( 
+    const vol_geom_info_t* geom_info, 
+    uint8_t** processed_audio_data_ptr, 
+    uint32_t* processed_audio_size_ptr, 
+    const int start_frame, 
+    const int end_frame,
+    bool* audio_allocated_ptr
+) {
+    *processed_audio_data_ptr = NULL;
+    *processed_audio_size_ptr = 0;
+
+    if ( geom_info->hdr.audio && geom_info->audio_data_ptr ) {
+        // Process audio if frame range is specified (automatic audio trimming)
+        if ( start_frame > 0 || end_frame < (int)geom_info->hdr.frame_count - 1 ) {
+            _printlog( _LOG_TYPE_INFO, "Automatically trimming audio to match frame range %d to %d\n", start_frame, end_frame );
+            
+            if ( _process_audio_data( geom_info->audio_data_ptr, geom_info->audio_data_sz,
+                                     geom_info->hdr.fps, start_frame, end_frame,
+                                     processed_audio_data_ptr, processed_audio_size_ptr ) ) {
+                _printlog( _LOG_TYPE_SUCCESS, "Successfully trimmed audio to match frames\n" );
+                *audio_allocated_ptr = true;
+            } else {
+                _printlog( _LOG_TYPE_WARNING, "WARNING: Failed to trim audio, using original\n" );
+                *processed_audio_data_ptr = geom_info->audio_data_ptr;
+                *processed_audio_size_ptr = geom_info->audio_data_sz;
+                return false;
+            }
+        } else {
+            // Use original audio data (no frame trimming)
+            *processed_audio_data_ptr = geom_info->audio_data_ptr;
+            *processed_audio_size_ptr = geom_info->audio_data_sz;
+            return true;
+        }
+    }
+    return true;
+}
+
+/**
+ * Process the header
+ */
+static bool _process_header( 
+    FILE* output_file, 
+    const vol_geom_info_t* geom_info_ptr, 
+    const uint32_t export_frame_count, 
+    const uint32_t processed_audio_size, 
+    const uint8_t* processed_audio_data, 
+    const uint32_t texture_width, 
+    const uint32_t texture_height 
+) {
+    // Write header with modifications
+    vol_geom_file_hdr_t modified_hdr = geom_info_ptr->hdr;
+    
+    // Update frame count for range selection
+    modified_hdr.frame_count = export_frame_count;
+    
+    // Update texture dimensions if resizing is requested
+    if ( texture_width > 0 && texture_height > 0 && modified_hdr.textured ) {
+        modified_hdr.texture_width = texture_width;
+        modified_hdr.texture_height = texture_height;
+        
+        // Preserve the original format. The BASIS encoder will output proper BASIS format with new dimensions
+        if ( modified_hdr.version >= 13 && modified_hdr.texture_container_format == 1 ) {
+            _printlog( _LOG_TYPE_INFO, "Texture will be resized to %dx%d while preserving BASIS format\n", 
+                      texture_width, texture_height );
+        }
+    }
+    
+    // Calculate correct frame_body_start offset for version 13+ with audio
+    if ( modified_hdr.version >= 13 && modified_hdr.audio && processed_audio_data != NULL ) {
+        // Calculate v13 header size: 
+        // format(4) + version(4) + compression(4) + frame_count(4) + normals(1) + textured(1) +
+        // texture_compression(1) + texture_container_format(1) + texture_width(4) + texture_height(4) +
+        // fps(4) + audio(4) + audio_start(4) + frame_body_start(4) = 44 bytes
+        uint32_t header_size = 44;
+        
+        // Frame body starts after: header + audio_size_field + audio_data
+        modified_hdr.frame_body_start = header_size + sizeof(uint32_t) + processed_audio_size;
+        
+        // Update audio_start to point right after header
+        modified_hdr.audio_start = header_size;
+        
+        _printlog( _LOG_TYPE_DEBUG, "Audio processing: original size %u -> processed size %u\n", geom_info_ptr->audio_data_sz, processed_audio_size );
+        _printlog( _LOG_TYPE_DEBUG, "Updated header offsets - audio_start: %u, frame_body_start: %u\n", modified_hdr.audio_start, modified_hdr.frame_body_start );
+    }
+    
+    if ( !_write_vols_header( output_file, &modified_hdr ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write output file header.\n" );
+        return false;
+    }
+    
+    long header_end_pos = ftell( output_file );
+    _printlog( _LOG_TYPE_DEBUG, "Header written, file position: %ld\n", header_end_pos );
+    
+    // Write audio data if present
+    if ( modified_hdr.audio && processed_audio_data != NULL ) {
+        _printlog( _LOG_TYPE_INFO, "Writing audio data to file...\n" );
+        // Write processed audio data
+        if ( 1 != fwrite( &processed_audio_size, sizeof( uint32_t ), 1, output_file ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data size.\n" );
+            return false;
+        }
+        if ( processed_audio_size != fwrite( processed_audio_data, sizeof( uint8_t ), processed_audio_size, output_file ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data.\n" );
+            return false;
+        }
+
+        long audio_end_pos = ftell( output_file );
+        _printlog( _LOG_TYPE_DEBUG, "Audio data written, file position: %ld (should match frame_body_start: %u)\n", audio_end_pos, modified_hdr.frame_body_start );
+    } else {
+        _printlog( _LOG_TYPE_DEBUG, "No audio data to write\n" );
+    }
+
+    return true;
+}
+
+/**
+ * Process the frames
+ */
+static bool _process_frames( 
+    FILE* output_file, 
+    const vol_geom_info_t* geom_info_ptr, 
+    const char* sequence_filename,
+    const uint32_t start_frame,
+    const uint32_t export_frame_count
+ ) {
+
+    for ( uint32_t output_frame_idx = 0; output_frame_idx < export_frame_count; output_frame_idx++ ) {
+        uint32_t input_frame_idx = (uint32_t)(start_frame + output_frame_idx);
+
+        // Read current frame
+        vol_geom_frame_data_t frame_data;
+        if ( !vol_geom_read_frame( sequence_filename, geom_info_ptr, input_frame_idx, &frame_data ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", input_frame_idx );
+            return false;
+        }
+
+        bool is_keyframe = vol_geom_is_keyframe( geom_info_ptr, input_frame_idx );
+        
+        // Process texture data and cache results
+        processed_texture_cache_t texture_cache = { NULL, 0, 0, 0, false };
+        if ( geom_info_ptr->hdr.version >= 11 && geom_info_ptr->hdr.textured && frame_data.texture_sz > 0 ) {
+            // Start timing overall texture processing
+            clock_t texture_start_time = clock();
+            
+            if ( !_process_texture_data( &frame_data.block_data_ptr[frame_data.texture_offset], 
+                                        frame_data.texture_sz, geom_info_ptr,
+                                        &texture_cache.data, &texture_cache.size,
+                                        &texture_cache.width, &texture_cache.height ) ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data for frame %i (input frame %u)\n", output_frame_idx, input_frame_idx );
+                return false;
+            }
+            texture_cache.processed = true;
+            
+            // Calculate and log total texture processing time
+            clock_t texture_end_time = clock();
+            double texture_time_ms = ((double)(texture_end_time - texture_start_time)) / CLOCKS_PER_SEC * 1000.0;
+            
+            // Accumulate timing statistics
+            _total_texture_processing_time_ms += texture_time_ms;
+            _texture_processing_frame_count++;
+            
+            _printlog( _LOG_TYPE_DEBUG, "Frame %u texture processing completed in %.2f ms total\n", output_frame_idx, texture_time_ms );
+        }
+        
+        // Special handling for first and last frame in range - must be a keyframe
+        if ( (output_frame_idx == 0 || output_frame_idx == export_frame_count-1) && !is_keyframe ) {
+            // Working memory for keyframe data
+            vol_geom_frame_data_t key_frame_data;
+
+            // Copy the current frame into the allocated block, it will be overwritten by the keyframe data
+            uint8_t* frame_blob = NULL;
+            frame_blob = (uint8_t*)malloc( frame_data.block_data_sz );
+            if ( !frame_blob ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate memory for frame %i.\n", output_frame_idx );
+                if ( texture_cache.data ) free( texture_cache.data );
+                return false;
+            }
+            memcpy( frame_blob, frame_data.block_data_ptr, frame_data.block_data_sz );
+            
+            // Find the previous keyframe
+            int key_idx = vol_geom_find_previous_keyframe( geom_info_ptr, input_frame_idx );
+
+            // Load keyframe data  (do that after saving the current frame into allocated_block)
+            if ( !vol_geom_read_frame( sequence_filename, geom_info_ptr, key_idx, &key_frame_data ) ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
+                if ( frame_blob ) free( frame_blob );
+                if ( texture_cache.data ) free( texture_cache.data );
+                return false;
+            }
+            // Replace vertices and normals in the keyframe data blob with the current frame data
+            // They are the same size, so we can just copy the data
+            memcpy( &key_frame_data.block_data_ptr[key_frame_data.vertices_offset], &frame_blob[frame_data.vertices_offset], frame_data.vertices_sz );
+            if ( geom_info_ptr->hdr.normals ) {
+                memcpy( &key_frame_data.block_data_ptr[key_frame_data.normals_offset], &frame_blob[frame_data.normals_offset], frame_data.normals_sz );
+            }
+
+            // Texture can stay as is, we don't need to copy it. It is already in the texture_cache.
+
+            // Replace the frame data with the keyframe data
+            frame_data = key_frame_data;
+
+            // Free the allocated block
+            free( frame_blob );
+
+            is_keyframe = true;
+        }
+
+        // Create modified frame header using cached texture size
+        vol_geom_frame_hdr_t modified_frame_hdr = geom_info_ptr->frame_headers_ptr[input_frame_idx];
+        
+        // Update frame number to be sequential starting from 0 for the exported range
+        modified_frame_hdr.frame_number = output_frame_idx;
+        
+        if ( output_frame_idx == 0 && !modified_frame_hdr.keyframe) {
+            modified_frame_hdr.keyframe = 1;
+        } else if ( output_frame_idx == export_frame_count-1 && !modified_frame_hdr.keyframe) {
+            modified_frame_hdr.keyframe = 2;
+        }
+        
+        uint32_t new_mesh_data_sz = _calculate_mesh_data_size( geom_info_ptr, &frame_data, is_keyframe, texture_cache.size );
+        modified_frame_hdr.mesh_data_sz = new_mesh_data_sz;
+
+        // Write frame header
+        if ( !_write_frame_header( output_file, &modified_frame_hdr ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame header for frame %i (input frame %u).\n", output_frame_idx, input_frame_idx );
+            if ( texture_cache.data ) free( texture_cache.data );
+            return false;
+        }
+        
+        // Write frame body using cached texture data
+        if ( !_write_frame_body( output_file, geom_info_ptr, &frame_data, is_keyframe, &texture_cache ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame body for frame %i (input frame %u).\n", output_frame_idx, input_frame_idx );
+            if ( texture_cache.data ) free( texture_cache.data );
+            return false;
+        }
+        
+        // Free cached texture data
+        if ( texture_cache.data ) {
+            free( texture_cache.data );
+        }
+        
+        _printlog( _LOG_TYPE_INFO, "Processed frame %i/%i (input frame %u)\n", output_frame_idx + 1, export_frame_count, input_frame_idx );
+    }
+    return true;
+}
+
+/**
  * Process the vologram and write it to the output file
  */
 static bool _process_vologram( void ) {
@@ -913,37 +1191,7 @@ static bool _process_vologram( void ) {
         return false;
     }
     
-    // Debug output: Show what was read from the file
-    _printlog( _LOG_TYPE_INFO, "=== INPUT FILE DEBUG INFO ===\n" );
-    _printlog( _LOG_TYPE_INFO, "File format: %.*s\n", _geom_info.hdr.format.sz, _geom_info.hdr.format.bytes );
-    _printlog( _LOG_TYPE_INFO, "Version: %u\n", _geom_info.hdr.version );
-    _printlog( _LOG_TYPE_INFO, "Compression: %u\n", _geom_info.hdr.compression );
-    _printlog( _LOG_TYPE_INFO, "Total frames: %u\n", _geom_info.hdr.frame_count );
-    
-    if ( _geom_info.hdr.version >= 11 ) {
-        _printlog( _LOG_TYPE_INFO, "Has normals: %s\n", _geom_info.hdr.normals ? "yes" : "no" );
-        _printlog( _LOG_TYPE_INFO, "Has texture: %s\n", _geom_info.hdr.textured ? "yes" : "no" );
-        _printlog( _LOG_TYPE_INFO, "Texture dimensions: %ux%u\n", _geom_info.hdr.texture_width, _geom_info.hdr.texture_height );
-        
-        if ( _geom_info.hdr.version >= 13 ) {
-            _printlog( _LOG_TYPE_INFO, "Texture compression: %u\n", _geom_info.hdr.texture_compression );
-            _printlog( _LOG_TYPE_INFO, "Texture container format: %u\n", _geom_info.hdr.texture_container_format );
-            _printlog( _LOG_TYPE_INFO, "FPS: %.2f\n", _geom_info.hdr.fps );
-            _printlog( _LOG_TYPE_INFO, "Has audio: %s\n", _geom_info.hdr.audio ? "yes" : "no" );
-            _printlog( _LOG_TYPE_INFO, "Audio start: %u\n", _geom_info.hdr.audio_start );
-            _printlog( _LOG_TYPE_INFO, "Frame body start: %u\n", _geom_info.hdr.frame_body_start );
-        } else {
-            _printlog( _LOG_TYPE_INFO, "Texture format: %u\n", _geom_info.hdr.texture_format );
-        }
-    }
-    
-    if ( _geom_info.hdr.version >= 12 && _geom_info.hdr.version < 13 ) {
-        _printlog( _LOG_TYPE_INFO, "Translation: [%.3f, %.3f, %.3f]\n", 
-                  _geom_info.hdr.translation[0], _geom_info.hdr.translation[1], _geom_info.hdr.translation[2] );
-        _printlog( _LOG_TYPE_INFO, "Rotation: [%.3f, %.3f, %.3f, %.3f]\n", 
-                  _geom_info.hdr.rotation[0], _geom_info.hdr.rotation[1], _geom_info.hdr.rotation[2], _geom_info.hdr.rotation[3] );
-        _printlog( _LOG_TYPE_INFO, "Scale: %.3f\n", _geom_info.hdr.scale );
-    }
+    _print_file_info( &_geom_info );
         
     // Validate and adjust frame range based on actual frame count
     uint32_t total_frames = _geom_info.hdr.frame_count;
@@ -993,6 +1241,21 @@ static bool _process_vologram( void ) {
         }
     }
     
+    // AUDIO PROCESSING
+    // Note: This works only for single-file vols, for video-based textures audio is part of the video file and will be processed with the video.
+    uint8_t* processed_audio_data = NULL;
+    uint32_t processed_audio_size = 0;
+    bool audio_allocated = false;
+
+    // Process audio data first to determine final audio size
+    if ( _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
+        if ( !_process_audio( &_geom_info, &processed_audio_data, &processed_audio_size, _start_frame, _end_frame, &audio_allocated ) ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process audio.\n" );
+            if ( audio_allocated ) free( processed_audio_data );
+            return false;
+        }
+    }
+
     // Create output file
     FILE* output_file = fopen( _output_filename, "wb" );
     if ( !output_file ) {
@@ -1000,293 +1263,26 @@ static bool _process_vologram( void ) {
         return false;
     }
     
-    // Process audio data first to determine final audio size
-    uint8_t* processed_audio_data = NULL;
-    uint32_t processed_audio_size = 0;
-    bool audio_allocated = false;
-    
-    if ( _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
-        // Process audio if frame range is specified (automatic audio trimming)
-        if ( _start_frame > 0 || _end_frame < (int)_geom_info.hdr.frame_count - 1 ) {
-            _printlog( _LOG_TYPE_INFO, "Automatically trimming audio to match frame range %d to %d\n", _start_frame, _end_frame );
-            
-            if ( _process_audio_data( _geom_info.audio_data_ptr, _geom_info.audio_data_sz,
-                                     _geom_info.hdr.fps, _start_frame, _end_frame,
-                                     &processed_audio_data, &processed_audio_size ) ) {
-                audio_allocated = true;
-                _printlog( _LOG_TYPE_SUCCESS, "Successfully trimmed audio to match frames\n" );
-            } else {
-                _printlog( _LOG_TYPE_WARNING, "WARNING: Failed to trim audio, using original\n" );
-                processed_audio_data = _geom_info.audio_data_ptr;
-                processed_audio_size = _geom_info.audio_data_sz;
-            }
-        } else {
-            // Use original audio data (no frame trimming)
-            processed_audio_data = _geom_info.audio_data_ptr;
-            processed_audio_size = _geom_info.audio_data_sz;
-        }
-    }
-    
-    // Write header with modifications
-    vol_geom_file_hdr_t modified_hdr = _geom_info.hdr;
-    
-    // Update frame count for range selection
-    modified_hdr.frame_count = export_frame_count;
-    
-    // Update texture dimensions if resizing is requested
-    if ( _texture_width > 0 && _texture_height > 0 && modified_hdr.textured ) {
-        modified_hdr.texture_width = _texture_width;
-        modified_hdr.texture_height = _texture_height;
-        
-        // For BASIS textures, preserve the original format - don't change to raw
-        // The BASIS encoder will output proper BASIS format with new dimensions
-        if ( modified_hdr.version >= 13 && modified_hdr.texture_container_format == 1 ) {
-            _printlog( _LOG_TYPE_INFO, "Texture will be resized to %dx%d while preserving BASIS format\n", 
-                      _texture_width, _texture_height );
-        }
-    }
-    
-    // Calculate correct frame_body_start offset for version 13+ with audio
-    if ( modified_hdr.version >= 13 && _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
-        // Calculate v13 header size: 
-        // format(4) + version(4) + compression(4) + frame_count(4) + normals(1) + textured(1) +
-        // texture_compression(1) + texture_container_format(1) + texture_width(4) + texture_height(4) +
-        // fps(4) + audio(4) + audio_start(4) + frame_body_start(4) = 44 bytes
-        uint32_t header_size = 44;
-        
-        // Frame body starts after: header + audio_size_field + audio_data
-        modified_hdr.frame_body_start = header_size + sizeof(uint32_t) + processed_audio_size;
-        
-        // Update audio_start to point right after header
-        modified_hdr.audio_start = header_size;
-        
-        _printlog( _LOG_TYPE_INFO, "Audio processing: original size %u -> processed size %u\n", 
-                  _geom_info.audio_data_sz, processed_audio_size );
-        _printlog( _LOG_TYPE_INFO, "Updated header offsets - audio_start: %u, frame_body_start: %u\n", 
-                  modified_hdr.audio_start, modified_hdr.frame_body_start );
-    }
-    
-    if ( !_write_vols_header( output_file, &modified_hdr ) ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write output file header.\n" );
+    // PROCESSING HEADER
+    if ( !_process_header( output_file, &_geom_info, export_frame_count, processed_audio_size, processed_audio_data, _texture_width, _texture_height ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process header.\n" );
         if ( audio_allocated ) free( processed_audio_data );
         fclose( output_file );
         return false;
     }
-    
-    long header_end_pos = ftell( output_file );
-    _printlog( _LOG_TYPE_INFO, "Header written, file position: %ld\n", header_end_pos );
-    
-    // Write audio data if present (already processed above)
-    if ( _geom_info.hdr.audio && _geom_info.audio_data_ptr ) {
-        _printlog( _LOG_TYPE_INFO, "Writing audio data to file...\n" );
-        // Write processed audio data
-        if ( 1 != fwrite( &processed_audio_size, sizeof( uint32_t ), 1, output_file ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data size.\n" );
-            if ( audio_allocated ) free( processed_audio_data );
-            fclose( output_file );
-            return false;
-        }
-        if ( processed_audio_size != fwrite( processed_audio_data, sizeof( uint8_t ), 
-                                            processed_audio_size, output_file ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data.\n" );
-            if ( audio_allocated ) free( processed_audio_data );
-            fclose( output_file );
-            return false;
-        }
-        
-        // Free processed audio data if it was allocated
-        if ( audio_allocated ) {
-            free( processed_audio_data );
-        }
-        
-        long audio_end_pos = ftell( output_file );
-        _printlog( _LOG_TYPE_INFO, "Audio data written, file position: %ld (should match frame_body_start: %u)\n", 
-                  audio_end_pos, modified_hdr.frame_body_start );
-    } else {
-        _printlog( _LOG_TYPE_INFO, "No audio data to write\n" );
+    // Free processed audio data if it was allocated
+    if ( audio_allocated ) {
+        free( processed_audio_data );
     }
-    
-    // Process each frame in the selected range
+
+    // PROCESSING FRAMES
     const char* sequence_filename = _input_filename ? _input_filename : _input_sequence_filename;
-    
-    for ( uint32_t output_frame_idx = 0; output_frame_idx < export_frame_count; output_frame_idx++ ) {
-        uint32_t input_frame_idx = (uint32_t)(_start_frame + output_frame_idx);
 
-        // Read current frame
-        vol_geom_frame_data_t frame_data;
-        if ( !vol_geom_read_frame( sequence_filename, &_geom_info, input_frame_idx, &frame_data ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry frame %i.\n", input_frame_idx );
-            fclose( output_file );
-            return false;
-        }
-
-        bool is_keyframe = vol_geom_is_keyframe( &_geom_info, input_frame_idx );
-        
-        // Process texture data once per frame and cache results
-        processed_texture_cache_t texture_cache = { NULL, 0, 0, 0, false };
-        if ( _geom_info.hdr.version >= 11 && _geom_info.hdr.textured && frame_data.texture_sz > 0 ) {
-            // Start timing overall texture processing
-            clock_t texture_start_time = clock();
-            
-            if ( !_process_texture_data( &frame_data.block_data_ptr[frame_data.texture_offset], 
-                                        frame_data.texture_sz, &_geom_info,
-                                        &texture_cache.data, &texture_cache.size,
-                                        &texture_cache.width, &texture_cache.height ) ) {
-                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process texture data for frame %i (input frame %u)\n", output_frame_idx, input_frame_idx );
-                fclose( output_file );
-                return false;
-            }
-            texture_cache.processed = true;
-            
-            // Calculate and log total texture processing time
-            clock_t texture_end_time = clock();
-            double texture_time_ms = ((double)(texture_end_time - texture_start_time)) / CLOCKS_PER_SEC * 1000.0;
-            
-            // Accumulate timing statistics
-            _total_texture_processing_time_ms += texture_time_ms;
-            _texture_processing_frame_count++;
-            
-            // _printlog( _LOG_TYPE_INFO, "Frame %u texture processing completed in %.2f ms total\n", 
-            //           output_frame_idx, texture_time_ms );
-        }
-        
-        // Special handling for first frame in range - must be a keyframe
-        uint8_t* allocated_block = NULL;  // Track allocated memory for cleanup
-        if ( (output_frame_idx == 0 || output_frame_idx == export_frame_count-1) && !is_keyframe ) {
-
-            int key_idx = vol_geom_find_previous_keyframe( &_geom_info, input_frame_idx );
-
-            // Load keyframe data if needed
-            if ( !vol_geom_read_frame( sequence_filename, &_geom_info, key_idx, &_key_frame_data ) ) {
-                _printlog( _LOG_TYPE_ERROR, "ERROR: Reading geometry keyframe %i.\n", key_idx );
-                if ( texture_cache.data ) free( texture_cache.data );
-                fclose( output_file );
-                return false;
-            }
-
-            // Create a new combined data block:
-            // - Vertices and normals from current frame
-            // - Indices and UVs from keyframe
-            // - Texture from current frame
-            
-            // Calculate sizes for the new block
-            uint32_t vertices_size = sizeof(uint32_t) + frame_data.vertices_sz;  // size field + data
-            uint32_t normals_size = 0;
-            if ( _geom_info.hdr.normals && _geom_info.hdr.version >= 11 ) {
-                normals_size = sizeof(uint32_t) + frame_data.normals_sz;  // size field + data
-            }
-            uint32_t indices_size = sizeof(uint32_t) + _key_frame_data.indices_sz;  // size field + data
-            uint32_t uvs_size = sizeof(uint32_t) + _key_frame_data.uvs_sz;  // size field + data
-            uint32_t texture_size = 0;
-            if ( _geom_info.hdr.textured && _geom_info.hdr.version >= 11 ) {
-                texture_size = sizeof(uint32_t) + texture_cache.size;  // size field + data
-            }
-            
-            uint32_t total_size = vertices_size + normals_size + indices_size + uvs_size + texture_size;
-            
-            // Allocate new block
-            allocated_block = malloc( total_size );
-            if ( !allocated_block ) {
-                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to allocate memory for keyframe conversion\n" );
-                if ( texture_cache.data ) free( texture_cache.data );
-                fclose( output_file );
-                return false;
-            }
-
-            uint32_t offset = 0;
-            
-            // Copy vertices (size + data)
-            memcpy( &allocated_block[offset], &frame_data.vertices_sz, sizeof(uint32_t) );
-            offset += sizeof(uint32_t);
-            memcpy( &allocated_block[offset], &frame_data.block_data_ptr[frame_data.vertices_offset], frame_data.vertices_sz );
-            frame_data.vertices_offset = offset;
-            offset += frame_data.vertices_sz;
-            
-            // Copy normals if present (size + data)
-            if ( normals_size > 0 ) {
-                memcpy( &allocated_block[offset], &frame_data.normals_sz, sizeof(uint32_t) );
-                offset += sizeof(uint32_t);
-                memcpy( &allocated_block[offset], &frame_data.block_data_ptr[frame_data.normals_offset], frame_data.normals_sz );
-                frame_data.normals_offset = offset;
-                offset += frame_data.normals_sz;
-            }
-            
-            // Copy indices from keyframe (size + data)
-            memcpy( &allocated_block[offset], &_key_frame_data.indices_sz, sizeof(uint32_t) );
-            offset += sizeof(uint32_t);
-            memcpy( &allocated_block[offset], &_key_frame_data.block_data_ptr[_key_frame_data.indices_offset], _key_frame_data.indices_sz );
-            frame_data.indices_sz = _key_frame_data.indices_sz;
-            frame_data.indices_offset = offset;
-            offset += _key_frame_data.indices_sz;
-            
-            // Copy UVs from keyframe (size + data)
-            memcpy( &allocated_block[offset], &_key_frame_data.uvs_sz, sizeof(uint32_t) );
-            offset += sizeof(uint32_t);
-            memcpy( &allocated_block[offset], &_key_frame_data.block_data_ptr[_key_frame_data.uvs_offset], _key_frame_data.uvs_sz );
-            frame_data.uvs_sz = _key_frame_data.uvs_sz;
-            frame_data.uvs_offset = offset;
-            offset += _key_frame_data.uvs_sz;
-
-            // Copy texture if present (size + data)
-            if ( texture_size > 0 ) {
-                memcpy( &allocated_block[offset], &texture_cache.size, sizeof(uint32_t) );
-                offset += sizeof(uint32_t);
-                memcpy( &allocated_block[offset], texture_cache.data, texture_cache.size );
-                frame_data.texture_offset = offset;
-                offset += texture_cache.size;
-            }
-            
-            // Update frame_data to use the new block
-            frame_data.block_data_ptr = allocated_block;
-            frame_data.block_data_sz = total_size;
-            
-            is_keyframe = true;
-        }
-
-        // Create modified frame header using cached texture size
-        vol_geom_frame_hdr_t modified_frame_hdr = _geom_info.frame_headers_ptr[input_frame_idx];
-        
-        // Update frame number to be sequential starting from 0 for the exported range
-        modified_frame_hdr.frame_number = output_frame_idx;
-        
-        if ( output_frame_idx == 0 && !modified_frame_hdr.keyframe) {
-            modified_frame_hdr.keyframe = 1;
-        } else if ( output_frame_idx == export_frame_count-1 && !modified_frame_hdr.keyframe) {
-            modified_frame_hdr.keyframe = 2;
-        }
-        
-        uint32_t new_mesh_data_sz = _calculate_mesh_data_size( &_geom_info, &frame_data, is_keyframe, texture_cache.size );
-        modified_frame_hdr.mesh_data_sz = new_mesh_data_sz;
-
-        // Write frame header
-        if ( !_write_frame_header( output_file, &modified_frame_hdr ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame header for frame %i (input frame %u).\n", output_frame_idx, input_frame_idx );
-            if ( texture_cache.data ) free( texture_cache.data );
-            if ( allocated_block ) free( allocated_block );
-            fclose( output_file );
-            return false;
-        }
-        
-        // Write frame body using cached texture data
-        if ( !_write_frame_body( output_file, &_geom_info, &frame_data, is_keyframe, &texture_cache ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame body for frame %i (input frame %u).\n", output_frame_idx, input_frame_idx );
-            if ( texture_cache.data ) free( texture_cache.data );
-            if ( allocated_block ) free( allocated_block );
-            fclose( output_file );
-            return false;
-        }
-        
-        // Free cached texture data
-        if ( texture_cache.data ) {
-            free( texture_cache.data );
-        }
-        
-        // Free allocated keyframe conversion block
-        if ( allocated_block ) {
-            free( allocated_block );
-        }
-        
-        _printlog( _LOG_TYPE_INFO, "Processed frame %i/%i (input frame %u)\n", output_frame_idx + 1, export_frame_count, input_frame_idx );
+    // Process each frame in the selected range
+    if ( !_process_frames( output_file, &_geom_info, sequence_filename, _start_frame, export_frame_count ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process frames.\n" );
+        fclose( output_file );
+        return false;
     }
     
     fclose( output_file );
