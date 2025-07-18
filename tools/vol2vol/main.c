@@ -1012,6 +1012,22 @@ static bool _process_header(
     // Write header with modifications
     vol_geom_file_hdr_t modified_hdr = geom_info_ptr->hdr;
     
+    // Upgrade to version 13 if necessary
+    if ( modified_hdr.version < 13 ) {
+        _printlog( _LOG_TYPE_INFO, "Upgrading vologram from version %u to 13.\n", modified_hdr.version );
+        modified_hdr.version = 13;
+        
+        // Set v13 specific fields, defaulting to high quality settings
+        // modified_hdr.texture_compression = 2; // 1 = ETC1S, 2 = UASTC
+        // modified_hdr.texture_container_format = 1; // 1 = BASIS
+
+        // Ensure FPS is set, using a sensible default if not available
+        if ( modified_hdr.fps <= 0 ) {
+            modified_hdr.fps = 30.0f;
+            _printlog( _LOG_TYPE_WARNING, "WARNING: Input file has no FPS info. Assuming %.2f FPS for upgrade.\n", modified_hdr.fps );
+        }
+    }
+    
     // Update frame count for range selection
     modified_hdr.frame_count = export_frame_count;
     
@@ -1078,7 +1094,7 @@ static bool _process_header(
 /**
  * Process the frames
  */
-static bool _process_frames( 
+static bool _process_frames(
     FILE* output_file, 
     const vol_geom_info_t* geom_info_ptr, 
     const char* sequence_filename,
@@ -1260,20 +1276,28 @@ static bool _process_vologram( void ) {
                   _start_frame, _end_frame, export_frame_count, total_frames );
     }
     
-    // Initialize libraries based on version
-    if ( _geom_info.hdr.version < 13 ) {
+    if ( !_input_filename ) {
+        // Multi-file mode, we need to load the video file to get texture data
         use_vol_av = true;
         if ( !vol_av_open( _input_video_filename, &_av_info ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to open video file %s.\n", _input_video_filename );
             return false;
         }
-    } else {
-        if ( !vol_basis_init() ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to initialise Basis transcoder.\n" );
-            return false;
-        }
     }
-    
+
+    // Initialize BASIS Universal transcoder
+    if ( !vol_basis_init() ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to initialise Basis transcoder.\n" );
+        return false;
+    }
+
+    // Check if the input file is a single-file vologram
+    if ( _input_filename ) {
+        _printlog( _LOG_TYPE_INFO, "Input file is a single-file vologram\n" );
+    } else {
+        _printlog( _LOG_TYPE_INFO, "Input file is a multi-file vologram\n" );
+    }
+
     // AUDIO PROCESSING
     // Note: This works only for single-file vols, for video-based textures audio is part of the video file and will be processed with the video.
     uint8_t* processed_audio_data = NULL;
@@ -1290,9 +1314,16 @@ static bool _process_vologram( void ) {
     }
 
     // Create output file
-    FILE* output_file = fopen( _output_filename, "wb" );
+    FILE* output_file = NULL;
+    char output_filepath[MAX_FILENAME_LEN];
+    if ( _input_filename ) {
+        snprintf( output_filepath, sizeof( output_filepath ), "%s", _output_filename );
+    } else {
+        snprintf( output_filepath, sizeof( output_filepath ), "%s_header.vols", _output_filename );
+    }
+    output_file = fopen( output_filepath, "wb" );
     if ( !output_file ) {
-        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create output file %s.\n", _output_filename );
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create output file %s.\n", output_filepath );
         return false;
     }
     
@@ -1309,6 +1340,19 @@ static bool _process_vologram( void ) {
     }
 
     // PROCESSING FRAMES
+    if ( !_input_filename ) {
+        // Close the header file
+        fclose( output_file );
+
+        // Create the sequence file
+        snprintf( output_filepath, sizeof( output_filepath ), "%s_sequence.vols", _output_filename );
+        output_file = fopen( output_filepath, "wb" );
+        if ( !output_file ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to create output file %s.\n", output_filepath );
+            return false;
+        }
+    }
+    
     const char* sequence_filename = _input_filename ? _input_filename : _input_sequence_filename;
 
     // Process each frame in the selected range
