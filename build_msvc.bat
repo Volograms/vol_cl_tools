@@ -64,6 +64,7 @@ echo Building vol2vol...
 set LINKER_FLAGS_VOL2VOL=/out:vol2vol.exe
 set SRC_VOL2VOL= ^
 ..\tools\vol2vol\main.c ^
+..\tools\vol2vol\video_processing.c ^
 ..\tools\vol2vol\basis_encoder_wrapper.cpp ^
 ..\lib\vol_av.c ^
 ..\lib\vol_basis.cpp ^
