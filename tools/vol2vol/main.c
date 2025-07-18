@@ -26,6 +26,8 @@
  *                   Uses BASIS Universal's high-quality resampling and preserves BASIS format
  *   --start-frame   Start frame for trimming (0-based, inclusive). Audio automatically trimmed to match.
  *   --end-frame     End frame for trimming (0-based, inclusive). Audio automatically trimmed to match.
+ *   --quality       BASIS texture quality (1-255). Higher is better. Default is 192.
+ *   --threads       Number of threads for encoding. Default is 4.
  *   --help          Show this help message
  *
  * Compilation
@@ -95,6 +97,8 @@ typedef enum {
     CL_TEXTURE_SIZE,
     CL_START_FRAME,
     CL_END_FRAME,
+    CL_QUALITY,
+    CL_THREADS,
     CL_HELP,
     CL_MAX
 } cl_flag_enum_t;
@@ -124,6 +128,8 @@ static cl_flag_t _cl_flags[CL_MAX] = {
     { "--texture-size", "-t", "Resize texture to specified resolution (e.g., 512x512).\n", 1 },
     { "--start-frame", "-sf", "Start frame for trimming (0-based, inclusive). Audio automatically trimmed to match.\n", 1 },
     { "--end-frame", "-ef", "End frame for trimming (0-based, inclusive). Audio automatically trimmed to match.\n", 1 },
+    { "--quality", "-q", "BASIS texture quality (1-255). Higher is better. Default is 192.\n", 1 },
+    { "--threads", "-th", "Number of threads for encoding. Default is 4.\n", 1 },
     { "--help", NULL, "Show this help message.\n", 0 }
 };
 
@@ -145,6 +151,8 @@ static int _texture_width = 0;   // 0 means no resizing
 static int _texture_height = 0;  // 0 means no resizing
 static int _start_frame = -1;    // -1 means no start frame limit
 static int _end_frame = -1;      // -1 means no end frame limit
+static int _quality_level = 192; // Default BASIS quality level
+static int _num_threads = 4;     // Default number of threads for encoding
 
 // Vol data structures
 static vol_geom_info_t _geom_info;
@@ -371,7 +379,7 @@ static bool _process_texture_data( const uint8_t* texture_data, uint32_t texture
         
         if ( !basis_encode_texture_with_resize( rgba_data, src_width, src_height,
                                                _texture_width, _texture_height, use_uastc, true,
-                                               192, 4,
+                                               _quality_level, _num_threads,
                                                output_data_ptr, output_size_ptr ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to encode resized texture to BASIS format\n" );
             free( rgba_data );
@@ -887,6 +895,31 @@ static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_in
 }
 
 /**
+ * Calculates the size of a v13+ header.
+ * This avoids using a hardcoded "magic number" for the header size.
+ *
+ * @return The calculated size of the header in bytes.
+ */
+static uint32_t _calculate_v13_header_size() {
+    uint32_t size = 0;
+    size += sizeof( uint32_t ); // format (VOLS magic number)
+    size += sizeof( uint32_t ); // version
+    size += sizeof( uint32_t ); // compression
+    size += sizeof( uint32_t ); // frame_count
+    size += sizeof( uint8_t );  // normals
+    size += sizeof( uint8_t );  // textured
+    size += sizeof( uint8_t );  // texture_compression
+    size += sizeof( uint8_t );  // texture_container_format
+    size += sizeof( uint32_t ); // texture_width
+    size += sizeof( uint32_t ); // texture_height
+    size += sizeof( float );    // fps
+    size += sizeof( uint32_t ); // audio
+    size += sizeof( uint32_t ); // audio_start
+    size += sizeof( uint32_t ); // frame_body_start
+    return size;
+}
+
+/**
  * Print the file info
  */
 static void _print_file_info( const vol_geom_info_t* geom_info ) {
@@ -1000,7 +1033,7 @@ static bool _process_header(
         // format(4) + version(4) + compression(4) + frame_count(4) + normals(1) + textured(1) +
         // texture_compression(1) + texture_container_format(1) + texture_width(4) + texture_height(4) +
         // fps(4) + audio(4) + audio_start(4) + frame_body_start(4) = 44 bytes
-        uint32_t header_size = 44;
+        uint32_t header_size = _calculate_v13_header_size();
         
         // Frame body starts after: header + audio_size_field + audio_data
         modified_hdr.frame_body_start = header_size + sizeof(uint32_t) + processed_audio_size;
@@ -1119,7 +1152,7 @@ static bool _process_frames(
             // Replace vertices and normals in the keyframe data blob with the current frame data
             // They are the same size, so we can just copy the data
             memcpy( &key_frame_data.block_data_ptr[key_frame_data.vertices_offset], &frame_blob[frame_data.vertices_offset], frame_data.vertices_sz );
-            if ( geom_info_ptr->hdr.normals ) {
+            if ( geom_info_ptr->hdr.normals && frame_data.normals_sz > 0 ) {
                 memcpy( &key_frame_data.block_data_ptr[key_frame_data.normals_offset], &frame_blob[frame_data.normals_offset], frame_data.normals_sz );
             }
 
@@ -1400,6 +1433,24 @@ int main( int argc, char** argv ) {
         return 1;
     }
     
+    // Parse quality level option
+    if ( _option_arg_indices[CL_QUALITY] ) {
+        const char* quality_str = my_argv[_option_arg_indices[CL_QUALITY] + 1];
+        if ( sscanf( quality_str, "%d", &_quality_level ) != 1 || _quality_level < 1 || _quality_level > 255 ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Invalid quality level '%s'. Must be an integer between 1 and 255.\n", quality_str );
+            return 1;
+        }
+    }
+
+    // Parse threads option
+    if ( _option_arg_indices[CL_THREADS] ) {
+        const char* threads_str = my_argv[_option_arg_indices[CL_THREADS] + 1];
+        if ( sscanf( threads_str, "%d", &_num_threads ) != 1 || _num_threads < 1 || _num_threads > 256 ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: Invalid thread count '%s'. Must be an integer between 1 and 256.\n", threads_str );
+            return 1;
+        }
+    }
+
     // Initialize BASIS Universal encoder if texture resizing is requested
     if ( _texture_width > 0 && _texture_height > 0 ) {
         // Enable OpenCL for faster texture encoding
