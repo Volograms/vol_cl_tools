@@ -19,6 +19,8 @@
 #include <libavutil/error.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/rational.h>
+#include <libavutil/opt.h>
+#include <libswscale/swscale.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -119,265 +121,416 @@ static int write_output_buffer(void* opaque, uint8_t* buf, int buf_size) {
     return buf_size;
 }
 
+static bool open_input(const char* filename, const uint8_t* buffer, size_t buffer_size, AVFormatContext** fmt_ctx) {
+    *fmt_ctx = avformat_alloc_context();
+    if (!*fmt_ctx) {
+        LOG(ERROR, "ERROR: Could not allocate format context\n");
+        return false;
+    }
+
+    if (buffer) {
+        memory_buffer_t* mem_buf = av_malloc(sizeof(memory_buffer_t));
+        mem_buf->data = (uint8_t*)buffer;
+        mem_buf->size = buffer_size;
+        mem_buf->pos = 0;
+
+        size_t avio_buffer_size = 4096;
+        uint8_t* avio_buffer = av_malloc(avio_buffer_size);
+        AVIOContext* avio_ctx = avio_alloc_context(avio_buffer, (int)avio_buffer_size, 0, mem_buf, read_memory_buffer, NULL, seek_memory_buffer);
+        if (!avio_ctx) {
+            av_free(avio_buffer);
+            av_free(mem_buf);
+            LOG(ERROR, "ERROR: Failed to create AVIO context\n");
+            return false;
+        }
+        (*fmt_ctx)->pb = avio_ctx;
+    }
+
+    if (avformat_open_input(fmt_ctx, filename, NULL, NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to open input\n");
+        if (buffer && (*fmt_ctx)->pb) {
+            av_freep(&(*fmt_ctx)->pb->buffer);
+            avio_context_free(&(*fmt_ctx)->pb);
+        }
+        avformat_free_context(*fmt_ctx);
+        *fmt_ctx = NULL;
+        return false;
+    }
+
+    if (avformat_find_stream_info(*fmt_ctx, NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to find stream info\n");
+        avformat_close_input(fmt_ctx);
+        *fmt_ctx = NULL;
+        return false;
+    }
+    return true;
+}
+
+
+typedef struct {
+    AVCodecContext* dec_ctx;
+    AVCodecContext* enc_ctx;
+    int64_t last_pts;
+    int64_t last_dts;
+    struct SwsContext *sws_ctx;
+    AVFrame *tmp_frame;
+} StreamContext;
+
+static void cleanup(AVFormatContext* ifmt_ctx, AVFormatContext* ofmt_ctx, StreamContext* stream_ctxs) {
+    if (stream_ctxs) {
+        for (unsigned int i = 0; i < ifmt_ctx->nb_streams; i++) {
+            if (stream_ctxs[i].dec_ctx) {
+                avcodec_free_context(&stream_ctxs[i].dec_ctx);
+            }
+            if (stream_ctxs[i].enc_ctx) {
+                avcodec_free_context(&stream_ctxs[i].enc_ctx);
+            }
+            if(stream_ctxs[i].sws_ctx) {
+                sws_freeContext(stream_ctxs[i].sws_ctx);
+            }
+            if(stream_ctxs[i].tmp_frame) {
+                av_frame_free(&stream_ctxs[i].tmp_frame);
+            }
+        }
+        av_free(stream_ctxs);
+    }
+    if (ifmt_ctx) {
+        avformat_close_input(&ifmt_ctx);
+    }
+    if (ofmt_ctx) {
+        if (ofmt_ctx->pb) {
+            avio_closep(&ofmt_ctx->pb);
+        }
+        avformat_free_context(ofmt_ctx);
+    }
+}
+
+
 bool process_video_file(const char* input_video_filename, const char* output_video_filename,
                        float fps, int start_frame, int end_frame) {
     if (!input_video_filename || !output_video_filename || fps <= 0 || start_frame < 0 || end_frame < start_frame) {
         return false;
     }
     
-    // Calculate timing
-    double start_time = (double)start_frame / fps;
-    double end_time = (double)(end_frame + 1) / fps;  // +1 to include the end frame
-    double duration = end_time - start_time;
-    
-    LOG(INFO, "Trimming video from %.3f to %.3f seconds (%.3f duration, frames %d to %d)\n", 
-        start_time, end_time, duration, start_frame, end_frame);
-    
-    // Open input format context
-    AVFormatContext* input_fmt_ctx = NULL;
-    if (avformat_open_input(&input_fmt_ctx, input_video_filename, NULL, NULL) < 0) {
-        LOG(ERROR, "ERROR: Failed to open input video file %s\n", input_video_filename);
+    AVFormatContext *ifmt_ctx = NULL, *ofmt_ctx = NULL;
+    StreamContext* stream_ctxs = NULL;
+    bool success = false;
+
+    if (!open_input(input_video_filename, NULL, 0, &ifmt_ctx)) {
         return false;
     }
-    
-    // Find stream info
-    if (avformat_find_stream_info(input_fmt_ctx, NULL) < 0) {
-        LOG(ERROR, "ERROR: Failed to find stream info\n");
-        avformat_close_input(&input_fmt_ctx);
+
+    avformat_alloc_output_context2(&ofmt_ctx, NULL, NULL, output_video_filename);
+    if (!ofmt_ctx) {
+        LOG(ERROR, "ERROR: Could not create output context\n");
+        cleanup(ifmt_ctx, NULL, NULL);
         return false;
     }
-    
-    // Create output format context
-    AVFormatContext* output_fmt_ctx = NULL;
-    if (avformat_alloc_output_context2(&output_fmt_ctx, NULL, NULL, output_video_filename) < 0) {
-        LOG(ERROR, "ERROR: Failed to create output format context\n");
-        avformat_close_input(&input_fmt_ctx);
+
+    stream_ctxs = av_calloc(ifmt_ctx->nb_streams, sizeof(StreamContext));
+    if (!stream_ctxs) {
+        LOG(ERROR, "ERROR: Failed to allocate stream contexts\n");
+        cleanup(ifmt_ctx, ofmt_ctx, NULL);
         return false;
     }
-    
-    // Copy streams from input to output
-    int* stream_mapping = av_calloc(input_fmt_ctx->nb_streams, sizeof(int));
+
+    int* stream_mapping = av_mallocz_array(ifmt_ctx->nb_streams, sizeof(int));
     if (!stream_mapping) {
-        LOG(ERROR, "ERROR: Failed to allocate stream mapping array\n");
-        avformat_free_context(output_fmt_ctx);
-        avformat_close_input(&input_fmt_ctx);
+        LOG(ERROR, "ERROR: Failed to allocate stream mapping\n");
+        cleanup(ifmt_ctx, ofmt_ctx, stream_ctxs);
         return false;
     }
-    
-    int stream_index = 0;
-    for (unsigned int i = 0; i < input_fmt_ctx->nb_streams; i++) {
-        AVStream* in_stream = input_fmt_ctx->streams[i];
+
+    for (unsigned int i = 0; i < ifmt_ctx->nb_streams; i++) {
+        stream_mapping[i] = -1;
+        AVStream* in_stream = ifmt_ctx->streams[i];
         AVCodecParameters* in_codecpar = in_stream->codecpar;
-        
-        if (in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
-            in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
-            in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE) {
-            stream_mapping[i] = -1;
+
+        if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO && in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
             continue;
         }
-        
-        stream_mapping[i] = stream_index++;
-        
-        AVStream* out_stream = avformat_new_stream(output_fmt_ctx, NULL);
+
+        AVCodec* dec = avcodec_find_decoder(in_codecpar->codec_id);
+        if (!dec) {
+            LOG(ERROR, "ERROR: Failed to find decoder for stream %d\n", i);
+            goto end;
+        }
+        AVCodecContext* dec_ctx = avcodec_alloc_context3(dec);
+        avcodec_parameters_to_context(dec_ctx, in_codecpar);
+        avcodec_open2(dec_ctx, dec, NULL);
+        stream_ctxs[i].dec_ctx = dec_ctx;
+
+        const AVCodec* enc = NULL;
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            const char* preferred_encoders[] = {
+                "h264_qsv",
+                "h264_nvenc",
+                "h264_amf",
+                "h264_videotoolbox",
+                "libx264",
+                "libopenh264",
+                "h264_mf",
+                NULL
+            };
+
+            for (int j = 0; preferred_encoders[j] != NULL; j++) {
+                LOG(INFO, "Attempting to find video encoder '%s'...\n", preferred_encoders[j]);
+                enc = avcodec_find_encoder_by_name(preferred_encoders[j]);
+                if (enc) {
+                    LOG(INFO, "Found supported encoder: '%s'\n", preferred_encoders[j]);
+                    break;
+                }
+            }
+
+            if (!enc) {
+                LOG(ERROR, "Could not find any suitable H.264 encoder.\n");
+                 // Debug: List all available encoders
+                LOG(DEBUG, "--- AVAILABLE ENCODERS ---\n");
+                const AVCodec* codec;
+                void *iter = NULL;
+                while ((codec = av_codec_iterate(&iter))) {
+                    if (av_codec_is_encoder(codec)) {
+                        LOG(DEBUG, "  - %s (%s)\n", codec->name, codec->long_name);
+                    }
+                }
+                LOG(DEBUG, "--------------------------\n");
+                goto end;
+            }
+        } else {
+            LOG(INFO, "Attempting to find audio encoder 'aac'...\n");
+            enc = avcodec_find_encoder_by_name("aac");
+        }
+
+        if (!enc) {
+            LOG(ERROR, "ERROR: Failed to find encoder for stream %d (%s)\n", i, av_get_media_type_string(in_codecpar->codec_type));
+            goto end;
+        }
+
+        AVStream* out_stream = avformat_new_stream(ofmt_ctx, enc);
         if (!out_stream) {
-            LOG(ERROR, "ERROR: Failed to create output stream\n");
-            av_freep(&stream_mapping);
-            avformat_free_context(output_fmt_ctx);
-            avformat_close_input(&input_fmt_ctx);
-            return false;
+            LOG(ERROR, "ERROR: Failed to create new stream for stream %d\n", i);
+            goto end;
         }
+        stream_mapping[i] = out_stream->index;
         
-        // Copy codec parameters
-        if (avcodec_parameters_copy(out_stream->codecpar, in_codecpar) < 0) {
-            LOG(ERROR, "ERROR: Failed to copy codec parameters\n");
-            av_freep(&stream_mapping);
-            avformat_free_context(output_fmt_ctx);
-            avformat_close_input(&input_fmt_ctx);
-            return false;
-        }
-        
-        out_stream->codecpar->codec_tag = 0;
-    }
-    
-    // Open output file
-    if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-        if (avio_open(&output_fmt_ctx->pb, output_video_filename, AVIO_FLAG_WRITE) < 0) {
-            LOG(ERROR, "ERROR: Failed to open output video file %s\n", output_video_filename);
-            av_freep(&stream_mapping);
-            avformat_free_context(output_fmt_ctx);
-            avformat_close_input(&input_fmt_ctx);
-            return false;
-        }
-    }
-    
-    // Write output header
-    if (avformat_write_header(output_fmt_ctx, NULL) < 0) {
-        LOG(ERROR, "ERROR: Failed to write output header\n");
-        av_freep(&stream_mapping);
-        if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-            avio_closep(&output_fmt_ctx->pb);
-        }
-        avformat_free_context(output_fmt_ctx);
-        avformat_close_input(&input_fmt_ctx);
-        return false;
-    }
-    
-    // Find video stream for keyframe seeking
-    int video_stream_index = -1;
-    for (unsigned int i = 0; i < input_fmt_ctx->nb_streams; i++) {
-        if (input_fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-            video_stream_index = i;
-            break;
-        }
-    }
-    
-    // Seek to start time, ensuring we start from a keyframe
-    int64_t seek_target = start_time * AV_TIME_BASE;
-    LOG(DEBUG, "Seeking to timestamp %lld (%.3f seconds)\n", seek_target, start_time);
-    
-    if (video_stream_index >= 0) {
-        // Seek to keyframe for video stream specifically
-        int64_t video_seek_target = av_rescale_q(seek_target, AV_TIME_BASE_Q, 
-                                                input_fmt_ctx->streams[video_stream_index]->time_base);
-        if (av_seek_frame(input_fmt_ctx, video_stream_index, video_seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
-            LOG(WARNING, "WARNING: Failed to seek video stream, trying general seek\n");
-            if (av_seek_frame(input_fmt_ctx, -1, seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
-                LOG(WARNING, "WARNING: Failed to seek to start time, processing from beginning\n");
+        AVCodecContext* enc_ctx = avcodec_alloc_context3(enc);
+        if (in_codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            AVRational framerate = av_d2q(fps, 60000);
+            enc_ctx->height = dec_ctx->height;
+            enc_ctx->width = dec_ctx->width;
+            enc_ctx->sample_aspect_ratio = dec_ctx->sample_aspect_ratio;
+            enc_ctx->pix_fmt = dec_ctx->pix_fmt;
+            enc_ctx->time_base = av_inv_q(framerate);
+            enc_ctx->framerate = framerate;
+            
+            // For hardware encoders, we must often convert to the nv12 pixel format.
+            // Querying them for supported formats can cause crashes, so we force it.
+            if (strcmp(enc->name, "h264_qsv") == 0 ||
+                strcmp(enc->name, "h264_amf") == 0) {
+                
+                LOG(INFO, "Hardware encoder '%s' selected. Forcing conversion to nv12.\n", enc->name);
+                stream_ctxs[i].sws_ctx = sws_getContext(dec_ctx->width, dec_ctx->height, dec_ctx->pix_fmt,
+                                                        dec_ctx->width, dec_ctx->height, AV_PIX_FMT_NV12,
+                                                        SWS_BILINEAR, NULL, NULL, NULL);
+                if (!stream_ctxs[i].sws_ctx) {
+                    LOG(ERROR, "Could not create SwsContext for pixel format conversion.\n");
+                    goto end;
+                }
+                enc_ctx->pix_fmt = AV_PIX_FMT_NV12;
+
+                stream_ctxs[i].tmp_frame = av_frame_alloc();
+                if (!stream_ctxs[i].tmp_frame) {
+                    LOG(ERROR, "Could not allocate temporary frame for conversion.\n");
+                    goto end;
+                }
+                stream_ctxs[i].tmp_frame->format = AV_PIX_FMT_NV12;
+                stream_ctxs[i].tmp_frame->width = dec_ctx->width;
+                stream_ctxs[i].tmp_frame->height = dec_ctx->height;
+                if (av_frame_get_buffer(stream_ctxs[i].tmp_frame, 32) < 0) {
+                    LOG(ERROR, "Could not allocate buffer for temporary frame.\n");
+                    goto end;
+                }
+            }
+            
+            av_opt_set(enc_ctx->priv_data, "preset", "slow", 0);
+            if (strcmp(enc->name, "h264_nvenc") == 0) {
+                av_opt_set(enc_ctx->priv_data, "cq", "23", 0);
+                LOG(INFO, "Configuring h264_nvenc with cq=23 and preset=slow.\n");
+            } else if (strcmp(enc->name, "h264_qsv") == 0) {
+                // For QSV, global_quality is a more direct way to set quality.
+                // It is a global quality factor, where lower is better. 25 is a good balance.
+                enc_ctx->global_quality = 30; 
+                av_opt_set(enc_ctx->priv_data, "look_ahead", "1", 0);
+                LOG(INFO, "Configuring h264_qsv with global_quality=%d.\n", enc_ctx->global_quality);
+            } else if (strcmp(enc->name, "libx264") == 0) {
+                 av_opt_set(enc_ctx->priv_data, "crf", "19", 0);
+                 LOG(INFO, "Configuring libx264 with crf=19 and preset=slow.\n");
+            } else {
+                // Fallback for other encoders (amf, videotoolbox, libopenh264, mf)
+                long long target_bitrate = 20000000; // 20 Mbps fallback
+                if (in_codecpar->bit_rate > target_bitrate) {
+                    target_bitrate = in_codecpar->bit_rate;
+                }
+                enc_ctx->bit_rate = target_bitrate;
+                LOG(INFO, "Configuring %s with target bitrate: %lld bps\n", enc->name, enc_ctx->bit_rate);
+            }
+
+            if (dec_ctx->gop_size > 0) {
+                enc_ctx->gop_size = dec_ctx->gop_size;
+                LOG(INFO, "Using original GOP size: %d\n", dec_ctx->gop_size);
+            } else {
+                enc_ctx->gop_size = (int)(fps + 0.5);
+                LOG(INFO, "Original GOP size not available, calculating from FPS: %d\n", enc_ctx->gop_size);
+            }
+        } else {
+            enc_ctx->sample_rate = dec_ctx->sample_rate;
+            enc_ctx->channel_layout = dec_ctx->channel_layout;
+            enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
+            enc_ctx->sample_fmt = enc->sample_fmts[0];
+            enc_ctx->time_base = (AVRational){1, enc_ctx->sample_rate};
+            if (in_codecpar->bit_rate > 0) {
+                enc_ctx->bit_rate = in_codecpar->bit_rate;
+                LOG(INFO, "Using original audio bitrate: %lld bps\n", in_codecpar->bit_rate);
+            } else {
+                enc_ctx->bit_rate = 128000; // 128 kbps as a fallback
+                LOG(INFO, "Original audio bitrate not available, using default: 128 kbps\n");
             }
         }
-    } else {
-        // No video stream found, use general seek
-        if (av_seek_frame(input_fmt_ctx, -1, seek_target, AVSEEK_FLAG_BACKWARD) < 0) {
-            LOG(WARNING, "WARNING: Failed to seek to start time, processing from beginning\n");
+        
+        if (ofmt_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
+            enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+        }
+        
+        LOG(INFO, "Opening encoder '%s'...\n", enc->name);
+        int ret = avcodec_open2(enc_ctx, enc, NULL);
+        if (ret < 0) {
+            char err_buf[AV_ERROR_MAX_STRING_SIZE] = {0};
+            av_strerror(ret, err_buf, sizeof(err_buf));
+            LOG(ERROR, "Failed to open encoder: %s\n", err_buf);
+            goto end;
+        }
+        LOG(INFO, "Encoder opened successfully.\n");
+
+        avcodec_parameters_from_context(out_stream->codecpar, enc_ctx);
+        out_stream->time_base = enc_ctx->time_base;
+        if (enc_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+            out_stream->r_frame_rate = enc_ctx->framerate;
+            out_stream->avg_frame_rate = enc_ctx->framerate;
+        }
+        stream_ctxs[i].enc_ctx = enc_ctx;
+    }
+
+    if (!(ofmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+        if (avio_open(&ofmt_ctx->pb, output_video_filename, AVIO_FLAG_WRITE) < 0) {
+            LOG(ERROR, "ERROR: Could not open output file %s\n", output_video_filename);
+            goto end;
         }
     }
     
-    // Process packets
-    AVPacket* packet = av_packet_alloc();
-    if (!packet) {
-        LOG(ERROR, "ERROR: Failed to allocate packet\n");
-        av_freep(&stream_mapping);
-        if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-            avio_closep(&output_fmt_ctx->pb);
-        }
-        avformat_free_context(output_fmt_ctx);
-        avformat_close_input(&input_fmt_ctx);
-        return false;
+    if (avformat_write_header(ofmt_ctx, NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to write output header\n");
+        goto end;
     }
+
+    double start_time = (double)start_frame / fps;
+    double end_time = (double)(end_frame + 1) / fps;
+
+    av_seek_frame(ifmt_ctx, -1, (int64_t)(start_time * AV_TIME_BASE), AVSEEK_FLAG_BACKWARD);
+
+    AVPacket* pkt = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    int64_t* first_pts = NULL;
     
-    int64_t start_time_av = start_time * AV_TIME_BASE;
-    int64_t end_time_av = end_time * AV_TIME_BASE;
-    int64_t* stream_first_pts = av_calloc(input_fmt_ctx->nb_streams, sizeof(int64_t));
-    int64_t* stream_first_dts = av_calloc(input_fmt_ctx->nb_streams, sizeof(int64_t));
-    
-    // Check for allocation failure
-    if (!stream_first_pts || !stream_first_dts) {
-        LOG(ERROR, "ERROR: Failed to allocate timestamp arrays\n");
-        av_packet_free(&packet);
-        av_freep(&stream_mapping);
-        if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-            avio_closep(&output_fmt_ctx->pb);
-        }
-        avformat_free_context(output_fmt_ctx);
-        avformat_close_input(&input_fmt_ctx);
-        return false;
+    first_pts = av_calloc(ifmt_ctx->nb_streams, sizeof(int64_t));
+    if (!first_pts) {
+        LOG(ERROR, "Failed to allocate memory for pts tracking\n");
+        goto end;
     }
-    
-    // Initialize first timestamp arrays
-    for (unsigned int i = 0; i < input_fmt_ctx->nb_streams; i++) {
-        stream_first_pts[i] = AV_NOPTS_VALUE;
-        stream_first_dts[i] = AV_NOPTS_VALUE;
-    }
-    
-    while (av_read_frame(input_fmt_ctx, packet) >= 0) {
-        if (stream_mapping[packet->stream_index] < 0) {
-            av_packet_unref(packet);
+    for(unsigned int i = 0; i < ifmt_ctx->nb_streams; i++) first_pts[i] = -1;
+    int64_t video_frames_written = 0;
+
+    while (av_read_frame(ifmt_ctx, pkt) >= 0) {
+        int stream_index = pkt->stream_index;
+        if (stream_mapping[stream_index] < 0) {
+            av_packet_unref(pkt);
             continue;
         }
+        AVStream* in_stream = ifmt_ctx->streams[stream_index];
+        AVStream* out_stream = ofmt_ctx->streams[stream_mapping[stream_index]];
+        StreamContext* s_ctx = &stream_ctxs[stream_index];
         
-        AVStream* in_stream = input_fmt_ctx->streams[packet->stream_index];
-        AVStream* out_stream = output_fmt_ctx->streams[stream_mapping[packet->stream_index]];
-        
-        // Convert packet timestamp to AV_TIME_BASE for range checking
-        int64_t packet_time = av_rescale_q(packet->pts, in_stream->time_base, AV_TIME_BASE_Q);
-        
-        // Skip packets before our start time
-        if (packet_time < start_time_av) {
-            av_packet_unref(packet);
+        if (!s_ctx->dec_ctx) {
+            av_packet_unref(pkt);
             continue;
         }
-        
-        // Stop processing packets after our end time
-        if (packet_time > end_time_av) {
-            av_packet_unref(packet);
+
+        double ts_in_seconds = pkt->pts * av_q2d(in_stream->time_base);
+        if (ts_in_seconds >= end_time) {
+            av_packet_unref(pkt);
             break;
         }
-        
-        // Record first timestamp for each stream to calculate offset
-        if (stream_first_pts[packet->stream_index] == AV_NOPTS_VALUE) {
-            stream_first_pts[packet->stream_index] = packet->pts;
-            LOG(DEBUG, "Stream %d first PTS: %lld (%.3f seconds)\n", 
-                packet->stream_index, packet->pts, 
-                packet->pts * av_q2d(in_stream->time_base));
+
+        if (avcodec_send_packet(s_ctx->dec_ctx, pkt) == 0) {
+            while (avcodec_receive_frame(s_ctx->dec_ctx, frame) == 0) {
+                double frame_ts_sec = frame->pts * av_q2d(in_stream->time_base);
+                if (frame_ts_sec < start_time) {
+                    continue;
+                }
+                
+                AVFrame* frame_to_encode = frame;
+                if (s_ctx->sws_ctx) {
+                    sws_scale(s_ctx->sws_ctx, (const uint8_t * const *)frame->data, frame->linesize, 0, frame->height, s_ctx->tmp_frame->data, s_ctx->tmp_frame->linesize);
+                    frame_to_encode = s_ctx->tmp_frame;
+                }
+
+                if (s_ctx->enc_ctx->codec_type == AVMEDIA_TYPE_VIDEO) {
+                    frame_to_encode->pts = video_frames_written++;
+                } else if (s_ctx->enc_ctx->codec_type == AVMEDIA_TYPE_AUDIO) {
+                    if (first_pts[stream_index] == -1) {
+                        first_pts[stream_index] = frame->pts;
+                    }
+                    frame_to_encode->pts = av_rescale_q(frame->pts - first_pts[stream_index], in_stream->time_base, s_ctx->enc_ctx->time_base);
+                }
+
+                if (avcodec_send_frame(s_ctx->enc_ctx, frame_to_encode) == 0) {
+                    AVPacket out_pkt = { 0 };
+                    
+                    while (avcodec_receive_packet(s_ctx->enc_ctx, &out_pkt) == 0) {
+                        av_packet_rescale_ts(&out_pkt, s_ctx->enc_ctx->time_base, out_stream->time_base);
+                        out_pkt.stream_index = stream_mapping[stream_index];
+                        av_interleaved_write_frame(ofmt_ctx, &out_pkt);
+                        av_packet_unref(&out_pkt);
+                    }
+                }
+            }
         }
-        if (stream_first_dts[packet->stream_index] == AV_NOPTS_VALUE) {
-            stream_first_dts[packet->stream_index] = packet->dts;
-        }
-        
-        // Adjust packet timestamps to start from 0
-        if (packet->pts != AV_NOPTS_VALUE) {
-            packet->pts -= stream_first_pts[packet->stream_index];
-        }
-        if (packet->dts != AV_NOPTS_VALUE) {
-            packet->dts -= stream_first_dts[packet->stream_index];
-        }
-        
-        // Rescale timestamps to output timebase
-        packet->pts = av_rescale_q_rnd(packet->pts, in_stream->time_base, out_stream->time_base, 
-                                      AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
-        packet->dts = av_rescale_q_rnd(packet->dts, in_stream->time_base, out_stream->time_base, 
-                                      AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
-        packet->duration = av_rescale_q(packet->duration, in_stream->time_base, out_stream->time_base);
-        packet->pos = -1;
-        packet->stream_index = stream_mapping[packet->stream_index];
-        
-        // Write packet to output
-        if (av_interleaved_write_frame(output_fmt_ctx, packet) < 0) {
-            LOG(WARNING, "WARNING: Failed to write video packet\n");
-        }
-        
-        av_packet_unref(packet);
+        av_packet_unref(pkt);
     }
-    
-    // Update output stream durations
-    for (unsigned int i = 0; i < output_fmt_ctx->nb_streams; i++) {
-        AVStream* out_stream = output_fmt_ctx->streams[i];
-        out_stream->duration = av_rescale_q(duration * AV_TIME_BASE, AV_TIME_BASE_Q, out_stream->time_base);
+
+    for (unsigned int i = 0; i < ifmt_ctx->nb_streams; i++) {
+        if (stream_ctxs[i].enc_ctx) {
+             if (avcodec_send_frame(stream_ctxs[i].enc_ctx, NULL) == 0) {
+                AVPacket out_pkt = { 0 };
+                while(avcodec_receive_packet(stream_ctxs[i].enc_ctx, &out_pkt) == 0) {
+                     av_packet_rescale_ts(&out_pkt, stream_ctxs[i].enc_ctx->time_base, ofmt_ctx->streams[stream_mapping[i]]->time_base);
+                     out_pkt.stream_index = stream_mapping[i];
+                     av_interleaved_write_frame(ofmt_ctx, &out_pkt);
+                     av_packet_unref(&out_pkt);
+                }
+             }
+        }
     }
-    
-    // Update overall format context duration
-    output_fmt_ctx->duration = duration * AV_TIME_BASE;
-    
-    // Cleanup timestamp arrays
-    av_freep(&stream_first_pts);
-    av_freep(&stream_first_dts);
-    
-    // Write trailer
-    av_write_trailer(output_fmt_ctx);
-    
-    // Cleanup
-    av_packet_free(&packet);
-    av_freep(&stream_mapping);
-    
-    if (!(output_fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-        avio_closep(&output_fmt_ctx->pb);
-    }
-    
-    avformat_free_context(output_fmt_ctx);
-    avformat_close_input(&input_fmt_ctx);
-    
-    LOG(INFO, "Successfully trimmed video file\n");
-    return true;
+
+    av_write_trailer(ofmt_ctx);
+    success = true;
+
+end:
+    av_packet_free(&pkt);
+    av_frame_free(&frame);
+    av_free(first_pts);
+    av_free(stream_mapping);
+    cleanup(ifmt_ctx, ofmt_ctx, stream_ctxs);
+    return success;
 }
 
 bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
@@ -526,7 +679,7 @@ bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
     }
     
     // Seek to start time
-    int64_t start_timestamp = av_rescale_q(start_time * AV_TIME_BASE, AV_TIME_BASE_Q, 
+    int64_t start_timestamp = av_rescale_q((int64_t)(start_time * AV_TIME_BASE), AV_TIME_BASE_Q, 
                                           input_stream->time_base);
     if (av_seek_frame(input_fmt_ctx, audio_stream_idx, start_timestamp, AVSEEK_FLAG_BACKWARD) < 0) {
         LOG(WARNING, "WARNING: Failed to seek to start time, processing from beginning\n");
@@ -543,14 +696,14 @@ bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
         return false;
     }
     
-    int64_t end_timestamp = av_rescale_q(end_time * AV_TIME_BASE, AV_TIME_BASE_Q, 
+    int64_t end_timestamp = av_rescale_q((int64_t)(end_time * AV_TIME_BASE), AV_TIME_BASE_Q, 
                                         input_stream->time_base);
     
     while (av_read_frame(input_fmt_ctx, packet) >= 0) {
         if (packet->stream_index == audio_stream_idx) {
             // Check if packet is within our time range
             if (packet->pts != AV_NOPTS_VALUE) {
-                if (packet->pts >= start_timestamp && packet->pts <= end_timestamp) {
+                if (packet->pts >= start_timestamp && packet->pts < end_timestamp) {
                     // Adjust packet stream index and timestamps for output
                     packet->stream_index = 0;
                     av_packet_rescale_ts(packet, input_stream->time_base, output_stream->time_base);
@@ -559,7 +712,7 @@ bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
                     if (av_write_frame(output_fmt_ctx, packet) < 0) {
                         LOG(WARNING, "WARNING: Failed to write audio packet\n");
                     }
-                } else if (packet->pts > end_timestamp) {
+                } else if (packet->pts >= end_timestamp) {
                     // We've passed our end time, stop processing
                     av_packet_unref(packet);
                     break;
