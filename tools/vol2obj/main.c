@@ -650,7 +650,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       goto _pv_fail;
     }
 
-    if ( _geom_info.hdr.version < 13 ) {
+    if ( !_geom_info.hdr.textured ) {
       use_vol_av = true;
     } else {
       if ( !vol_basis_init() ) {
