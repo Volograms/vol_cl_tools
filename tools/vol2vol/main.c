@@ -30,6 +30,7 @@
  *   --end-frame     End frame for trimming (0-based, inclusive). Audio automatically trimmed to match.
  *   --quality       BASIS texture quality (1-255). Higher is better. Default is 192.
  *   --threads       Number of threads for encoding. Default is 4.
+ *   --to-single-file  Convert video-based texture to a single vols file.
  *   --help          Show this help message
  *
  * Compilation
@@ -98,6 +99,7 @@ typedef enum {
     CL_END_FRAME,
     CL_QUALITY,
     CL_THREADS,
+    CL_TO_SINGLE_FILE,
     CL_HELP,
     CL_MAX
 } cl_flag_enum_t;
@@ -129,6 +131,7 @@ static cl_flag_t _cl_flags[CL_MAX] = {
     { "--end-frame", "-ef", "End frame for trimming (0-based, inclusive). Audio automatically trimmed to match.\n", 1 },
     { "--quality", "-q", "BASIS texture quality (1-255). Higher is better. Default is 192.\n", 1 },
     { "--threads", "-th", "Number of threads for encoding. Default is 4.\n", 1 },
+    { "--to-single-file", "-tsf", "Convert video-based texture to a single vols file.\n", 0 },
     { "--help", NULL, "Show this help message.\n", 0 }
 };
 
@@ -152,6 +155,7 @@ static int _start_frame = -1;    // -1 means no start frame limit
 static int _end_frame = -1;      // -1 means no end frame limit
 static int _quality_level = 192; // Default BASIS quality level
 static int _num_threads = 4;     // Default number of threads for encoding
+static bool _to_single_file = false; // Flag for converting to single file
 
 // Vol data structures
 static vol_geom_info_t _geom_info;
@@ -173,24 +177,22 @@ typedef struct {
 } processed_texture_cache_t;
 
 /**
- * Calculate mesh data size based on version and frame data
+ * Calculate mesh data size based on version and frame data. We assume the output version is 13.
  * 
- * @param geom_info           Geometry info
  * @param frame_data          Frame data
  * @param is_keyframe         Whether this is a keyframe
  * @param processed_texture_size Size of processed texture data (0 if no texture)
  * @return                    Calculated mesh data size
  */
-static uint32_t _calculate_mesh_data_size( const vol_geom_info_t* geom_info,
-                                          const vol_geom_frame_data_t* frame_data,
+static uint32_t _calculate_mesh_data_size(const vol_geom_frame_data_t* frame_data,
                                           bool is_keyframe,
                                           uint32_t processed_texture_size ) {
     // V10, 11 = Size of Vertices Data + Normals Data + Indices Data + UVs Data + Texture Data (WITHOUT size fields)
     // V12+ = Size of Vertices Data + Normals Data + Indices Data + UVs Data + Texture Data + 4 Bytes for each "Size of Array"
     uint32_t mesh_data_sz = frame_data->vertices_sz; // vertices data
     
-    // Add normals if not removing them and version >= 11
-    if ( !_no_normals && geom_info->hdr.version >= 11 && geom_info->hdr.normals ) {
+    // Add normals if not removing them
+    if ( !_no_normals && frame_data->normals_sz > 0 ) {
         mesh_data_sz += frame_data->normals_sz; // normals data
     }
     
@@ -201,22 +203,19 @@ static uint32_t _calculate_mesh_data_size( const vol_geom_info_t* geom_info,
     }
     
     // Add texture data if present
-    if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
+    if ( processed_texture_size > 0 ) {
         mesh_data_sz += processed_texture_size; // texture data
     }
     
-    // For version 12+, add size fields to mesh_data_sz
-    if ( geom_info->hdr.version >= 12 ) {
-        mesh_data_sz += sizeof( uint32_t ); // vertices size field
-        if ( !_no_normals && geom_info->hdr.normals ) {
-            mesh_data_sz += sizeof( uint32_t ); // normals size field
-        }
-        if ( is_keyframe ) {
-            mesh_data_sz += 2 * sizeof( uint32_t ); // indices + UVs size fields
-        }
-        if ( geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-            mesh_data_sz += sizeof( uint32_t ); // texture size field
-        }
+    mesh_data_sz += sizeof( uint32_t ); // vertices size field
+    if ( !_no_normals && frame_data->normals_sz > 0 ) {
+        mesh_data_sz += sizeof( uint32_t ); // normals size field
+    }
+    if ( is_keyframe ) {
+        mesh_data_sz += 2 * sizeof( uint32_t ); // indices + UVs size fields
+    }
+    if ( processed_texture_size > 0 ) {
+        mesh_data_sz += sizeof( uint32_t ); // texture size field
     }
     
     return mesh_data_sz;
@@ -514,29 +513,11 @@ static bool _write_frame_header( FILE* output_file, const vol_geom_frame_hdr_t* 
 /**
  * Write a frame body to the output file
  */
-static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_info, 
+static bool _write_frame_body( FILE* output_file,
                               const vol_geom_frame_data_t* frame_data, bool is_keyframe,
                               const processed_texture_cache_t* texture_cache ) {
-    if ( !output_file || !geom_info || !frame_data ) {
+    if ( !output_file || !frame_data ) {
         return false;
-    }
-    
-    // Calculate total written size for debugging
-    uint32_t total_written_sz = frame_data->vertices_sz;
-    if ( !_no_normals && geom_info->hdr.version >= 11 && geom_info->hdr.normals ) {
-        total_written_sz += frame_data->normals_sz;
-    }
-    if ( is_keyframe ) {
-        total_written_sz += frame_data->indices_sz + frame_data->uvs_sz;
-    }
-    
-    // Add texture data if present
-    if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        if ( texture_cache && texture_cache->processed ) {
-            total_written_sz += sizeof( uint32_t ) + texture_cache->size;
-        } else {
-            total_written_sz += sizeof( uint32_t ) + frame_data->texture_sz;
-        }
     }
     
     // Write vertices size and data
@@ -545,7 +526,7 @@ static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_in
                                            sizeof( uint8_t ), frame_data->vertices_sz, output_file ) ) return false;
     
     // Write normals size and data (only if not removing normals and version >= 11)
-    if ( !_no_normals && geom_info->hdr.version >= 11 && geom_info->hdr.normals ) {
+    if ( !_no_normals && frame_data->normals_sz > 0 ) {
         if ( 1 != fwrite( &frame_data->normals_sz, sizeof( uint32_t ), 1, output_file ) ) return false;
         if ( frame_data->normals_sz > 0 && frame_data->normals_sz != fwrite( &frame_data->block_data_ptr[frame_data->normals_offset], 
                                                                            sizeof( uint8_t ), frame_data->normals_sz, output_file ) ) return false;
@@ -565,23 +546,14 @@ static bool _write_frame_body( FILE* output_file, const vol_geom_info_t* geom_in
     }
     
     // Write texture size and data if present (using cached data)
-    if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        if ( texture_cache && texture_cache->processed ) {
-            // Use cached processed texture data
-            if ( 1 != fwrite( &texture_cache->size, sizeof( uint32_t ), 1, output_file ) ) return false;
-            if ( texture_cache->size != fwrite( texture_cache->data, sizeof( uint8_t ), texture_cache->size, output_file ) ) return false;
-        }
-    }
-    
-    // Write trailing mesh data size using the helper function
-    uint32_t texture_size_for_calculation = 0;
     if ( texture_cache && texture_cache->processed ) {
-        texture_size_for_calculation = texture_cache->size;
-    } else if ( geom_info->hdr.version >= 11 && geom_info->hdr.textured && frame_data->texture_sz > 0 ) {
-        texture_size_for_calculation = frame_data->texture_sz;
+        // Use cached processed texture data
+        if ( 1 != fwrite( &texture_cache->size, sizeof( uint32_t ), 1, output_file ) ) return false;
+        if ( texture_cache->size != fwrite( texture_cache->data, sizeof( uint8_t ), texture_cache->size, output_file ) ) return false;
     }
     
-    uint32_t trailing_mesh_data_sz = _calculate_mesh_data_size( geom_info, frame_data, is_keyframe, texture_size_for_calculation );
+    // Write trailing mesh data size using the helper function    
+    uint32_t trailing_mesh_data_sz = _calculate_mesh_data_size( frame_data, is_keyframe, texture_cache->size );
     if ( 1 != fwrite( &trailing_mesh_data_sz, sizeof( uint32_t ), 1, output_file ) ) return false;
     
     return true;
@@ -700,7 +672,8 @@ static bool _process_header(
     const uint32_t processed_audio_size, 
     const uint8_t* processed_audio_data, 
     const uint32_t texture_width, 
-    const uint32_t texture_height 
+    const uint32_t texture_height,
+    bool converting_to_single_file
 ) {
     // Write header with modifications
     vol_geom_file_hdr_t modified_hdr = geom_info_ptr->hdr;
@@ -709,16 +682,19 @@ static bool _process_header(
     if ( modified_hdr.version < 13 ) {
         _printlog( _LOG_TYPE_INFO, "Upgrading vologram from version %u to 13.\n", modified_hdr.version );
         modified_hdr.version = 13;
-        
-        // Set v13 specific fields, defaulting to high quality settings
-        // modified_hdr.texture_compression = 2; // 1 = ETC1S, 2 = UASTC
-        // modified_hdr.texture_container_format = 1; // 1 = BASIS
 
         // Ensure FPS is set, using a sensible default if not available
         if ( modified_hdr.fps <= 0 ) {
             modified_hdr.fps = 30.0f;
             _printlog( _LOG_TYPE_WARNING, "WARNING: Input file has no FPS info. Assuming %.2f FPS for upgrade.\n", modified_hdr.fps );
         }
+    }
+    // Set v13 specific fields, defaulting to high quality settings
+    if( converting_to_single_file ) {
+        _printlog( _LOG_TYPE_INFO, "Converting to single file, upgrading to v13 with BASIS texture.\n" );
+        modified_hdr.texture_compression = 1; // 1 = ETC1S, 2 = UASTC
+        modified_hdr.texture_container_format = 1; // 1 = BASIS
+        modified_hdr.textured = 1; // 1 = textured
     }
     
     // Update frame count for range selection
@@ -730,14 +706,14 @@ static bool _process_header(
         modified_hdr.texture_height = texture_height;
         
         // Preserve the original format. The BASIS encoder will output proper BASIS format with new dimensions
-        if ( modified_hdr.version >= 13 && modified_hdr.texture_container_format == 1 ) {
+        if ( modified_hdr.texture_container_format == 1 ) {
             _printlog( _LOG_TYPE_INFO, "Texture will be resized to %dx%d while preserving BASIS format\n", 
                       texture_width, texture_height );
         }
     }
     
     // Calculate correct frame_body_start offset for version 13+ with audio
-    if ( modified_hdr.version >= 13 && modified_hdr.audio && processed_audio_data != NULL ) {
+    // if ( modified_hdr.audio && processed_audio_data != NULL ) {
         // Calculate v13 header size: 
         // format(4) + version(4) + compression(4) + frame_count(4) + normals(1) + textured(1) +
         // texture_compression(1) + texture_container_format(1) + texture_width(4) + texture_height(4) +
@@ -752,7 +728,7 @@ static bool _process_header(
         
         _printlog( _LOG_TYPE_DEBUG, "Audio processing: original size %u -> processed size %u\n", geom_info_ptr->audio_data_sz, processed_audio_size );
         _printlog( _LOG_TYPE_DEBUG, "Updated header offsets - audio_start: %u, frame_body_start: %u\n", modified_hdr.audio_start, modified_hdr.frame_body_start );
-    }
+    // }
     
     if ( !_write_vols_header( output_file, &modified_hdr ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write output file header.\n" );
@@ -761,15 +737,17 @@ static bool _process_header(
     
     long header_end_pos = ftell( output_file );
     _printlog( _LOG_TYPE_DEBUG, "Header written, file position: %ld\n", header_end_pos );
-    
+
+    // Write processed audio data size
+    if ( 1 != fwrite( &processed_audio_size, sizeof( uint32_t ), 1, output_file ) ) {
+        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data size.\n" );
+        return false;
+    }
     // Write audio data if present
     if ( modified_hdr.audio && processed_audio_data != NULL ) {
         _printlog( _LOG_TYPE_INFO, "Writing audio data to file...\n" );
-        // Write processed audio data
-        if ( 1 != fwrite( &processed_audio_size, sizeof( uint32_t ), 1, output_file ) ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data size.\n" );
-            return false;
-        }
+        
+        
         if ( processed_audio_size != fwrite( processed_audio_data, sizeof( uint8_t ), processed_audio_size, output_file ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data.\n" );
             return false;
@@ -792,7 +770,8 @@ static bool _process_frames(
     const vol_geom_info_t* geom_info_ptr, 
     const char* sequence_filename,
     const uint32_t start_frame,
-    const uint32_t export_frame_count
+    const uint32_t export_frame_count,
+    vol_av_video_t* av_info_ptr
  ) {
 
     for ( uint32_t output_frame_idx = 0; output_frame_idx < export_frame_count; output_frame_idx++ ) {
@@ -809,7 +788,72 @@ static bool _process_frames(
         
         // Process texture data and cache results
         processed_texture_cache_t texture_cache = { NULL, 0, 0, 0, false };
-        if ( geom_info_ptr->hdr.version >= 11 && geom_info_ptr->hdr.textured && frame_data.texture_sz > 0 ) {
+
+        // TODO: review this if this is correct
+        if ( av_info_ptr ) {
+            // New logic: Converting from video to BASIS texture
+            if ( !vol_av_read_next_frame( av_info_ptr ) ) {
+                _printlog( _LOG_TYPE_ERROR, "Failed to read video frame %u\n", input_frame_idx );
+                return false;
+            }
+
+            uint32_t video_width = (uint32_t)av_info_ptr->w;
+            uint32_t video_height = (uint32_t)av_info_ptr->h;
+
+            uint8_t* rgb_buffer = av_info_ptr->pixels_ptr;
+            if ( !rgb_buffer ) {
+                _printlog( _LOG_TYPE_ERROR, "Failed to get pixel buffer from video frame %u\n", input_frame_idx );
+                return false;
+            }
+
+            // Convert RGB to RGBA (BASIS encoder expects RGBA)
+            uint32_t rgba_buffer_sz = video_width * video_height * 4;
+            uint8_t* rgba_buffer = (uint8_t*)malloc( rgba_buffer_sz );
+            if ( !rgba_buffer ) {
+                _printlog( _LOG_TYPE_ERROR, "Failed to allocate RGBA buffer for video frame %u\n", input_frame_idx );
+                return false;
+            }
+            
+            // Convert RGB24 to RGBA32 (add alpha channel)
+            for ( uint32_t i = 0; i < video_width * video_height; i++ ) {
+                rgba_buffer[i * 4 + 0] = rgb_buffer[i * 3 + 0]; // R
+                rgba_buffer[i * 4 + 1] = rgb_buffer[i * 3 + 1]; // G
+                rgba_buffer[i * 4 + 2] = rgb_buffer[i * 3 + 2]; // B
+                rgba_buffer[i * 4 + 3] = 255;                   // A (fully opaque)
+            }
+
+            uint32_t target_w = _texture_width > 0 ? (uint32_t)_texture_width : video_width;
+            uint32_t target_h = _texture_height > 0 ? (uint32_t)_texture_height : video_height;
+            
+            // Start timing texture encoding
+            clock_t encode_start_time = clock();
+
+            _printlog( _LOG_TYPE_INFO, "video_width=%u, video_height=%u, target_w=%u, target_h=%u\n", video_width, video_height, target_w, target_h );
+                        
+            if ( !basis_encode_texture_with_resize( rgba_buffer, video_width, video_height,
+                                                   target_w, target_h, false, true,
+                                                   _quality_level, _num_threads,
+                                                   &texture_cache.data, &texture_cache.size ) ) {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to encode video frame %u to BASIS format\n", input_frame_idx );
+                free( rgba_buffer );
+                return false;
+            }
+            _printlog( _LOG_TYPE_INFO, "Encoded video frame size: %u bytes\n", texture_cache.size );
+
+            // Calculate and log encoding time
+            clock_t encode_end_time = clock();
+            double encode_time_ms = ((double)(encode_end_time - encode_start_time)) / CLOCKS_PER_SEC * 1000.0;
+            _total_texture_processing_time_ms += encode_time_ms;
+            _texture_processing_frame_count++;
+
+            _printlog( _LOG_TYPE_DEBUG, "Frame %u video-to-BASIS encoding completed in %.2f ms\n", output_frame_idx, encode_time_ms );
+
+            free( rgba_buffer );
+            texture_cache.processed = true;
+            texture_cache.width = target_w;
+            texture_cache.height = target_h;
+
+        } else if ( geom_info_ptr->hdr.version >= 11 && geom_info_ptr->hdr.textured && frame_data.texture_sz > 0 ) {
             // Start timing overall texture processing
             clock_t texture_start_time = clock();
             
@@ -888,7 +932,7 @@ static bool _process_frames(
             modified_frame_hdr.keyframe = 2;
         }
         
-        uint32_t new_mesh_data_sz = _calculate_mesh_data_size( geom_info_ptr, &frame_data, is_keyframe, texture_cache.size );
+        uint32_t new_mesh_data_sz = _calculate_mesh_data_size( &frame_data, is_keyframe, texture_cache.size );
         modified_frame_hdr.mesh_data_sz = new_mesh_data_sz;
 
         // Write frame header
@@ -899,7 +943,7 @@ static bool _process_frames(
         }
         
         // Write frame body using cached texture data
-        if ( !_write_frame_body( output_file, geom_info_ptr, &frame_data, is_keyframe, &texture_cache ) ) {
+        if ( !_write_frame_body( output_file, &frame_data, is_keyframe, &texture_cache ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write frame body for frame %i (input frame %u).\n", output_frame_idx, input_frame_idx );
             if ( texture_cache.data ) free( texture_cache.data );
             return false;
@@ -920,6 +964,7 @@ static bool _process_frames(
  */
 static bool _process_vologram( void ) {
     bool use_vol_av = false;
+    bool converting_to_single_file = !_input_filename && _to_single_file;
     
     // Open geometry file
     if ( _input_filename ) {
@@ -977,6 +1022,24 @@ static bool _process_vologram( void ) {
             return false;
         }
         _geom_info.hdr.fps = (float)vol_av_frame_rate( &_av_info );
+
+        if ( converting_to_single_file ) {
+            // Seek to start frame by reading and discarding frames
+            vol_av_dimensions( &_av_info, &_texture_width, &_texture_height );
+            _printlog( _LOG_TYPE_INFO, "Video dimensions: %d x %d\n", _texture_width, _texture_height );
+
+            // Initialize BASIS Universal transcoder
+            if ( _start_frame > 0 ) {
+                _printlog( _LOG_TYPE_INFO, "Seeking to start frame %d by reading frames...\n", _start_frame );
+                for ( int i = 0; i < _start_frame; i++ ) {
+                    if ( !vol_av_read_next_frame( &_av_info ) ) {
+                        _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to seek video to start frame %d. Reached end of video.\n", _start_frame );
+                        vol_av_close( &_av_info );
+                        return false;
+                    }
+                }
+            }
+        }
     }
 
     // Initialize BASIS Universal transcoder
@@ -993,7 +1056,7 @@ static bool _process_vologram( void ) {
     }
 
     // AUDIO PROCESSING
-    // Note: This works only for single-file vols, for video-based textures audio is part of the video file and will be processed with the video.
+    // Note: This works only for single-file vols, for video-based textures audio is part of the video and will be processed with the video.
     uint8_t* processed_audio_data = NULL;
     uint32_t processed_audio_size = 0;
     bool audio_allocated = false;
@@ -1010,7 +1073,7 @@ static bool _process_vologram( void ) {
     // Create output file
     FILE* output_file = NULL;
     char output_filepath[MAX_FILENAME_LEN];
-    if ( _input_filename ) {
+    if ( _input_filename || converting_to_single_file ) {
         snprintf( output_filepath, sizeof( output_filepath ), "%s", _output_filename );
     } else {
         snprintf( output_filepath, sizeof( output_filepath ), "%s_header.vols", _output_filename );
@@ -1022,7 +1085,7 @@ static bool _process_vologram( void ) {
     }
     
     // PROCESSING HEADER
-    if ( !_process_header( output_file, &_geom_info, export_frame_count, processed_audio_size, processed_audio_data, _texture_width, _texture_height ) ) {
+    if ( !_process_header( output_file, &_geom_info, export_frame_count, processed_audio_size, processed_audio_data, _texture_width, _texture_height, converting_to_single_file ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process header.\n" );
         if ( audio_allocated ) free( processed_audio_data );
         fclose( output_file );
@@ -1034,7 +1097,7 @@ static bool _process_vologram( void ) {
     }
 
     // PROCESSING FRAMES
-    if ( !_input_filename ) {
+    if ( !_input_filename && !converting_to_single_file ) {
         // Close the header file
         fclose( output_file );
 
@@ -1048,9 +1111,10 @@ static bool _process_vologram( void ) {
     }
     
     const char* sequence_filename = _input_filename ? _input_filename : _input_sequence_filename;
+    vol_av_video_t* av_info_for_frames = (converting_to_single_file) ? &_av_info : NULL;
 
     // Process each frame in the selected range
-    if ( !_process_frames( output_file, &_geom_info, sequence_filename, _start_frame, export_frame_count ) ) {
+    if ( !_process_frames( output_file, &_geom_info, sequence_filename, _start_frame, export_frame_count, av_info_for_frames ) ) {
         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to process frames.\n" );
         fclose( output_file );
         return false;
@@ -1059,7 +1123,7 @@ static bool _process_vologram( void ) {
     fclose( output_file );
     
     // Process video file for multi-file format
-    if ( use_vol_av ) {
+    if ( use_vol_av && !converting_to_single_file ) {
         // Create output video filename with same prefix as header and sequence
         char output_video_path[MAX_FILENAME_LEN];
         
@@ -1175,12 +1239,22 @@ int main( int argc, char** argv ) {
     _output_filename = my_argv[_option_arg_indices[CL_OUTPUT] + 1];
     
     // Check input mode
+    _to_single_file = _option_arg_indices[CL_TO_SINGLE_FILE] > 0;
     if ( _option_arg_indices[CL_INPUT] ) {
         _input_filename = my_argv[_option_arg_indices[CL_INPUT] + 1];
+        if ( _to_single_file ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: --to-single-file can only be used with multi-file input (header, sequence, video).\n" );
+            return 1;
+        }
     } else {
         // Multi-file mode
-        if ( !_option_arg_indices[CL_HEADER] || !_option_arg_indices[CL_SEQUENCE] || !_option_arg_indices[CL_VIDEO] ) {
-            _printlog( _LOG_TYPE_ERROR, "ERROR: For multi-file mode, header (-h), sequence (-s), and video (-v) are required.\n" );
+        if ( !_option_arg_indices[CL_HEADER] || !_option_arg_indices[CL_SEQUENCE] ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: For multi-file mode, header (-h) and sequence (-s) are required.\n" );
+            return 1;
+        }
+        // Video is required for multi-file mode for trimming or converting
+        if ( !_option_arg_indices[CL_VIDEO] ) {
+            _printlog( _LOG_TYPE_ERROR, "ERROR: For multi-file mode, video (-v) is required.\n" );
             return 1;
         }
         _input_header_filename = my_argv[_option_arg_indices[CL_HEADER] + 1];
@@ -1260,7 +1334,7 @@ int main( int argc, char** argv ) {
     }
 
     // Initialize BASIS Universal encoder if texture resizing is requested
-    if ( _texture_width > 0 && _texture_height > 0 ) {
+    if ( (_texture_width > 0 && _texture_height > 0) || _to_single_file ) {
         // Enable OpenCL for faster texture encoding
         if ( !basis_encoder_init_wrapper(true) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to initialize BASIS Universal encoder\n" );
@@ -1284,7 +1358,11 @@ int main( int argc, char** argv ) {
     if ( _input_filename ) {
         _printlog( _LOG_TYPE_SUCCESS, "Successfully converted vologram to %s", _output_filename );
     } else {
-        _printlog( _LOG_TYPE_SUCCESS, "Successfully converted multi-file vologram to %s_*", _output_filename );
+        if ( _to_single_file ) {
+            _printlog( _LOG_TYPE_SUCCESS, "Successfully converted multi-file vologram to single file %s", _output_filename );
+        } else {
+            _printlog( _LOG_TYPE_SUCCESS, "Successfully converted multi-file vologram to %s_*", _output_filename );
+        }
     }
     if ( _no_normals ) {
         _printlog( _LOG_TYPE_SUCCESS, " (normals removed)" );
