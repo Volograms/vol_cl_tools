@@ -910,7 +910,7 @@ static bool _process_frames(
             free( texture_cache.data );
         }
         
-        _printlog( _LOG_TYPE_INFO, "Processed frame %i/%i (input frame %u)\n", output_frame_idx + 1, export_frame_count, input_frame_idx );
+        // _printlog( _LOG_TYPE_DEBUG, "Processed frame %i/%i (input frame %u)\n", output_frame_idx + 1, export_frame_count, input_frame_idx );
     }
     return true;
 }
