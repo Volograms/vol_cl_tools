@@ -106,7 +106,7 @@ typedef struct {
     size_t capacity;
 } output_buffer_t;
 
-static int write_output_buffer(void* opaque, uint8_t* buf, int buf_size) {
+static int write_output_buffer(void* opaque, const uint8_t* buf, int buf_size) {
     output_buffer_t* out_buf = (output_buffer_t*)opaque;
     
     // Expand buffer if needed
@@ -237,7 +237,9 @@ bool process_video_file(const char* input_video_filename, const char* output_vid
         return false;
     }
 
-    int* stream_mapping = av_mallocz_array(ifmt_ctx->nb_streams, sizeof(int));
+    int* stream_mapping = av_malloc_array(ifmt_ctx->nb_streams, sizeof(int));
+    // if (stream_mapping)
+    //     memset(stream_mapping, 0, ifmt_ctx->nb_streams * sizeof(int));
     if (!stream_mapping) {
         LOG(ERROR, "ERROR: Failed to allocate stream mapping\n");
         cleanup(ifmt_ctx, ofmt_ctx, stream_ctxs);
@@ -387,8 +389,17 @@ bool process_video_file(const char* input_video_filename, const char* output_vid
             }
         } else {
             enc_ctx->sample_rate = dec_ctx->sample_rate;
-            enc_ctx->channel_layout = dec_ctx->channel_layout;
-            enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
+            // enc_ctx->channel_layout = dec_ctx->channel_layout;
+            // enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
+            #if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+            // FFmpeg 7.0+ - use new ch_layout API
+                av_channel_layout_copy(&enc_ctx->ch_layout, &dec_ctx->ch_layout);
+            #else
+            // FFmpeg < 7.0 - use legacy channel_layout and channels fields
+                enc_ctx->channel_layout = dec_ctx->channel_layout;
+                enc_ctx->channels = av_get_channel_layout_nb_channels(enc_ctx->channel_layout);
+            #endif
+            
             enc_ctx->sample_fmt = enc->sample_fmts[0];
             enc_ctx->time_base = (AVRational){1, enc_ctx->sample_rate};
             if (in_codecpar->bit_rate > 0) {

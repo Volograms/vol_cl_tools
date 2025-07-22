@@ -31,6 +31,8 @@
 // For QueryPerformanceCounter/QueryPerformanceFrequency
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <strings.h> // for strcasecmp on POSIX
 #endif
 
 namespace basisu
