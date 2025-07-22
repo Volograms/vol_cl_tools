@@ -737,12 +737,12 @@ bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
             audio_size, *output_size_ptr);
         
         // DEBUG: Write trimmed audio to file for debugging
-        FILE* debug_audio = fopen("debug_trimmed_audio.mp3", "wb");
-        if (debug_audio) {
-            fwrite(output_buf.data, 1, output_buf.size, debug_audio);
-            fclose(debug_audio);
-            LOG(INFO, "DEBUG: Wrote trimmed audio to debug_trimmed_audio.mp3 (%u bytes)\n", *output_size_ptr);
-        }
+        // FILE* debug_audio = fopen("debug_trimmed_audio.mp3", "wb");
+        // if (debug_audio) {
+        //     fwrite(output_buf.data, 1, output_buf.size, debug_audio);
+        //     fclose(debug_audio);
+        //     LOG(INFO, "DEBUG: Wrote trimmed audio to debug_trimmed_audio.mp3 (%u bytes)\n", *output_size_ptr);
+        // }
     } else {
         LOG(ERROR, "ERROR: No output audio data generated\n");
         if (output_buf.data) {
@@ -799,7 +799,7 @@ bool extract_audio_from_video(const char* video_filename,
 #else
     int channels = input_stream->codecpar->channels;
 #endif
-    LOG(INFO, "Found audio stream: codec=%d, sample_rate=%d, channels=%d\n", 
+    LOG(DEBUG, "Found audio stream: codec=%d, sample_rate=%d, channels=%d\n", 
         input_stream->codecpar->codec_id, 
         input_stream->codecpar->sample_rate,
         channels);
@@ -906,16 +906,16 @@ bool extract_audio_from_video(const char* video_filename,
     encoder_ctx->time_base = (AVRational){1, encoder_ctx->sample_rate};
     
     // DEBUG: Log encoder configuration
-    LOG(INFO, "DEBUG: MP3 Encoder Config:\n");
-    LOG(INFO, "  - Bit rate: %lld bps\n", encoder_ctx->bit_rate);
-    LOG(INFO, "  - Sample rate: %d Hz\n", encoder_ctx->sample_rate);
-#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
-    LOG(INFO, "  - Channels: %d\n", encoder_ctx->ch_layout.nb_channels);
-#else
-    LOG(INFO, "  - Channels: %d\n", encoder_ctx->channels);
-#endif
-    LOG(INFO, "  - Sample format: %s\n", av_get_sample_fmt_name(encoder_ctx->sample_fmt));
-    LOG(INFO, "  - Time base: %d/%d\n", encoder_ctx->time_base.num, encoder_ctx->time_base.den);
+    // LOG(INFO, "DEBUG: MP3 Encoder Config:\n");
+    // LOG(INFO, "  - Bit rate: %lld bps\n", encoder_ctx->bit_rate);
+    // LOG(INFO, "  - Sample rate: %d Hz\n", encoder_ctx->sample_rate);
+    // #if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+    // LOG(INFO, "  - Channels: %d\n", encoder_ctx->ch_layout.nb_channels);
+    // #else
+    // LOG(INFO, "  - Channels: %d\n", encoder_ctx->channels);
+    // #endif
+    // LOG(INFO, "  - Sample format: %s\n", av_get_sample_fmt_name(encoder_ctx->sample_fmt));
+    // LOG(INFO, "  - Time base: %d/%d\n", encoder_ctx->time_base.num, encoder_ctx->time_base.den);
     
     if (avcodec_open2(encoder_ctx, encoder, NULL) < 0) {
         LOG(ERROR, "ERROR: Failed to open MP3 encoder\n");
@@ -987,7 +987,7 @@ bool extract_audio_from_video(const char* video_filename,
         return false;
     }
     
-    LOG(INFO, "Audio resampler configured: %s@%dHz → %s@%dHz\n",
+    LOG(DEBUG, "Audio resampler configured: %s@%dHz → %s@%dHz\n",
         av_get_sample_fmt_name(decoder_ctx->sample_fmt), decoder_ctx->sample_rate,
         av_get_sample_fmt_name(encoder_ctx->sample_fmt), encoder_ctx->sample_rate);
     
@@ -1026,19 +1026,9 @@ bool extract_audio_from_video(const char* video_filename,
     
     // Resampled frame will be configured in each iteration
     
-    LOG(INFO, "Starting audio transcoding from %s to MP3...\n", 
-        avcodec_get_name(decoder_ctx->codec_id));
-    
-    // DEBUG: Also save the original audio stream without transcoding for comparison
-    FILE* debug_original_audio = NULL;
-    if (decoder_ctx->codec_id == AV_CODEC_ID_AAC) {
-        debug_original_audio = fopen("debug_original_audio.aac", "wb");
-        LOG(INFO, "DEBUG: Will save original AAC audio to debug_original_audio.aac\n");
-    } else if (decoder_ctx->codec_id == AV_CODEC_ID_MP3) {
-        debug_original_audio = fopen("debug_original_audio.mp3", "wb");
-        LOG(INFO, "DEBUG: Will save original MP3 audio to debug_original_audio.mp3\n");
-    }
-    
+    LOG(INFO, "Starting audio transcoding from %s to MP3...\n",
+         
+    avcodec_get_name(decoder_ctx->codec_id));
     int64_t packet_count = 0;
     int64_t frame_count = 0;
     
@@ -1046,12 +1036,7 @@ bool extract_audio_from_video(const char* video_filename,
     while (av_read_frame(input_fmt_ctx, input_packet) >= 0) {
         if (input_packet->stream_index == audio_stream_idx) {
             packet_count++;
-            
-            // DEBUG: Write original audio packet to debug file
-            if (debug_original_audio) {
-                fwrite(input_packet->data, 1, input_packet->size, debug_original_audio);
-            }
-            
+         
             // Send packet to decoder
             int ret = avcodec_send_packet(decoder_ctx, input_packet);
             if (ret < 0) {
@@ -1256,24 +1241,19 @@ bool extract_audio_from_video(const char* video_filename,
             packet_count, frame_count, *output_size_ptr);
         
         // DEBUG: Write extracted audio to file for debugging
-        FILE* debug_audio = fopen("debug_extracted_audio.mp3", "wb");
-        if (debug_audio) {
-            fwrite(output_buf.data, 1, output_buf.size, debug_audio);
-            fclose(debug_audio);
-            LOG(INFO, "DEBUG: Wrote extracted audio to debug_extracted_audio.mp3 (%u bytes)\n", *output_size_ptr);
-        }
+        // FILE* debug_audio = fopen("debug_extracted_audio.mp3", "wb");
+        // if (debug_audio) {
+        //     fwrite(output_buf.data, 1, output_buf.size, debug_audio);
+        //     fclose(debug_audio);
+        //     LOG(INFO, "DEBUG: Wrote extracted audio to debug_extracted_audio.mp3 (%u bytes)\n", *output_size_ptr);
+        // }
     } else {
         LOG(INFO, "No audio data extracted (stream may be empty)\n");
         if (output_buf.data) {
             free(output_buf.data);
         }
     }
-    
-    // Close debug original audio file
-    if (debug_original_audio) {
-        fclose(debug_original_audio);
-        LOG(INFO, "DEBUG: Closed original audio debug file\n");
-    }
+
     
     // Cleanup - unref frames before freeing them
     av_frame_unref(decoded_frame);

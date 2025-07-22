@@ -234,6 +234,8 @@ void _printlog( _log_type log_type, const char* message_str, ... ) {
         fprintf( stderr, "%s", STRC_YELLOW );
     } else if ( _LOG_TYPE_SUCCESS == log_type ) {
         fprintf( stderr, "%s", STRC_GREEN );
+    } else if ( _LOG_TYPE_DEBUG == log_type ) {
+        return;
     }
     va_list arg_ptr;
     va_start( arg_ptr, message_str );
@@ -590,7 +592,7 @@ static uint32_t _calculate_v13_header_size() {
 static void _print_file_info( const vol_geom_info_t* geom_info ) {
 
     // Debug output: Show what was read from the file
-    _printlog( _LOG_TYPE_INFO, "=== INPUT FILE DEBUG INFO ===\n" );
+    _printlog( _LOG_TYPE_INFO, "=== INPUT FILE INFO ===\n" );
     _printlog( _LOG_TYPE_INFO, "File format: %.*s\n", geom_info->hdr.format.sz, geom_info->hdr.format.bytes );
     _printlog( _LOG_TYPE_INFO, "Version: %u\n", geom_info->hdr.version );
     _printlog( _LOG_TYPE_INFO, "Compression: %u\n", geom_info->hdr.compression );
@@ -620,6 +622,7 @@ static void _print_file_info( const vol_geom_info_t* geom_info ) {
                   geom_info->hdr.rotation[0], geom_info->hdr.rotation[1], geom_info->hdr.rotation[2], geom_info->hdr.rotation[3] );
         _printlog( _LOG_TYPE_INFO, "Scale: %.3f\n", geom_info->hdr.scale );
     }
+    _printlog( _LOG_TYPE_INFO, "=== INPUT FILE INFO END ===\n" );
 }
 
 /**
@@ -707,7 +710,7 @@ static bool _process_header(
         
         // Preserve the original format. The BASIS encoder will output proper BASIS format with new dimensions
         if ( modified_hdr.texture_container_format == 1 ) {
-            _printlog( _LOG_TYPE_INFO, "Texture will be resized to %dx%d while preserving BASIS format\n", 
+            _printlog( _LOG_TYPE_DEBUG, "Texture will be resized to %dx%d while preserving BASIS format\n", 
                       texture_width, texture_height );
         }
     }
@@ -748,12 +751,12 @@ static bool _process_header(
         _printlog( _LOG_TYPE_INFO, "Writing audio data to file...\n" );
         
         // DEBUG: Write final audio data to file for debugging
-        FILE* debug_audio = fopen("debug_final_audio.mp3", "wb");
-        if ( debug_audio ) {
-            fwrite( processed_audio_data, 1, processed_audio_size, debug_audio );
-            fclose( debug_audio );
-            _printlog( _LOG_TYPE_INFO, "DEBUG: Wrote final audio to debug_final_audio.mp3 (%u bytes)\n", processed_audio_size );
-        }
+        // FILE* debug_audio = fopen("debug_final_audio.mp3", "wb");
+        // if ( debug_audio ) {
+        //     fwrite( processed_audio_data, 1, processed_audio_size, debug_audio );
+        //     fclose( debug_audio );
+        //     _printlog( _LOG_TYPE_INFO, "DEBUG: Wrote final audio to debug_final_audio.mp3 (%u bytes)\n", processed_audio_size );
+        // }
         
         if ( processed_audio_size != fwrite( processed_audio_data, sizeof( uint8_t ), processed_audio_size, output_file ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data.\n" );
@@ -829,13 +832,13 @@ static bool _process_frames(
                 rgba_buffer[i * 4 + 3] = 255;                   // A (fully opaque)
             }
 
-            uint32_t target_w = _texture_width > 0 ? (uint32_t)_texture_width : video_width;
-            uint32_t target_h = _texture_height > 0 ? (uint32_t)_texture_height : video_height;
+            uint32_t target_w = _texture_width;
+            uint32_t target_h = _texture_height;
             
             // Start timing texture encoding
             clock_t encode_start_time = clock();
 
-            _printlog( _LOG_TYPE_INFO, "video_width=%u, video_height=%u, target_w=%u, target_h=%u\n", video_width, video_height, target_w, target_h );
+            _printlog( _LOG_TYPE_DEBUG, "video_width=%u, video_height=%u, target_w=%u, target_h=%u\n", video_width, video_height, target_w, target_h );
                         
             if ( !basis_encode_texture_with_resize( rgba_buffer, video_width, video_height,
                                                    target_w, target_h, false, true,
@@ -845,7 +848,7 @@ static bool _process_frames(
                 free( rgba_buffer );
                 return false;
             }
-            _printlog( _LOG_TYPE_INFO, "Encoded video frame size: %u bytes\n", texture_cache.size );
+            _printlog( _LOG_TYPE_DEBUG, "Encoded video frame size: %u bytes\n", texture_cache.size );
 
             // Calculate and log encoding time
             clock_t encode_end_time = clock();
@@ -853,7 +856,7 @@ static bool _process_frames(
             _total_texture_processing_time_ms += encode_time_ms;
             _texture_processing_frame_count++;
 
-            _printlog( _LOG_TYPE_DEBUG, "Frame %u video-to-BASIS encoding completed in %.2f ms\n", output_frame_idx, encode_time_ms );
+            _printlog( _LOG_TYPE_INFO, "Frame %u video-to-BASIS encoding completed in %.2f ms\n", output_frame_idx, encode_time_ms );
 
             free( rgba_buffer );
             texture_cache.processed = true;
@@ -1032,14 +1035,17 @@ static bool _process_vologram( void ) {
 
         if ( converting_to_single_file ) {
             // Seek to start frame by reading and discarding frames
-            vol_av_dimensions( &_av_info, &_texture_width, &_texture_height );
-            _printlog( _LOG_TYPE_INFO, "Video dimensions: %d x %d\n", _texture_width, _texture_height );
+            int texture_width = 0;
+            int texture_height = 0;
+            vol_av_dimensions( &_av_info, &texture_width, &texture_height );
+            _printlog( _LOG_TYPE_INFO, "Video dimensions: %d x %d\n", texture_width, texture_height );
+            _geom_info.hdr.texture_width = texture_width;
+            _geom_info.hdr.texture_height = texture_height;
 
             // Extract audio from video file for single-file conversion
-            _printlog( _LOG_TYPE_INFO, "Extracting audio from video file...\n" );
             if ( extract_audio_from_video( _input_video_filename, &_geom_info.audio_data_ptr, &_geom_info.audio_data_sz ) ) {
                 if ( _geom_info.audio_data_ptr && _geom_info.audio_data_sz > 0 ) {
-                    _printlog( _LOG_TYPE_SUCCESS, "Successfully extracted %u bytes of audio data\n", _geom_info.audio_data_sz );
+                    // _printlog( _LOG_TYPE_INFO, "Successfully extracted %u bytes of audio data\n", _geom_info.audio_data_sz );
                     _geom_info.hdr.audio = 1; // Mark that audio is present
                 } else {
                     _printlog( _LOG_TYPE_INFO, "No audio stream found in video file\n" );
@@ -1053,7 +1059,7 @@ static bool _process_vologram( void ) {
 
             // Initialize BASIS Universal transcoder
             if ( _start_frame > 0 ) {
-                _printlog( _LOG_TYPE_INFO, "Seeking to start frame %d by reading frames...\n", _start_frame );
+                _printlog( _LOG_TYPE_DEBUG, "Seeking to start frame %d by reading frames...\n", _start_frame );
                 for ( int i = 0; i < _start_frame; i++ ) {
                     if ( !vol_av_read_next_frame( &_av_info ) ) {
                         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to seek video to start frame %d. Reached end of video.\n", _start_frame );
@@ -1076,9 +1082,9 @@ static bool _process_vologram( void ) {
 
     // Check if the input file is a single-file vologram
     if ( _input_filename ) {
-        _printlog( _LOG_TYPE_INFO, "Input file is a single-file vologram\n" );
+        _printlog( _LOG_TYPE_DEBUG, "Input file is a single-file vologram\n" );
     } else {
-        _printlog( _LOG_TYPE_INFO, "Input file is a multi-file vologram\n" );
+        _printlog( _LOG_TYPE_DEBUG, "Input file is a multi-file vologram\n" );
     }
 
     // AUDIO PROCESSING

@@ -42,6 +42,9 @@ struct vol_av_internal_t {
 };
 
 static void _default_logger( vol_av_log_type_t log_type, const char* message_str ) {
+  if ( VOL_AV_LOG_TYPE_DEBUG == log_type ) {
+    return;
+  }
   FILE* stream_ptr = ( VOL_AV_LOG_TYPE_ERROR == log_type || VOL_AV_LOG_TYPE_WARNING == log_type ) ? stderr : stdout;
   fprintf( stream_ptr, "%s", message_str );
 }
@@ -80,7 +83,7 @@ bool vol_av_open( const char* filename, vol_av_video_t* info_ptr ) {
       _vol_loggerf( VOL_AV_LOG_TYPE_ERROR, "ERROR: Failed to open input file.\n" );
       return false;
     }
-    _vol_loggerf( VOL_AV_LOG_TYPE_INFO, "format: %s, duration: %lld us, bit_rate: %lld\n", p->fmt_ctx_ptr->iformat->name, p->fmt_ctx_ptr->duration,
+    _vol_loggerf( VOL_AV_LOG_TYPE_DEBUG, "format: %s, duration: %lld us, bit_rate: %lld\n", p->fmt_ctx_ptr->iformat->name, p->fmt_ctx_ptr->duration,
       p->fmt_ctx_ptr->bit_rate );
 
     // Read packets from the AVFormatContext to get stream information. this function populates p->fmt_ctx_ptr->streams
