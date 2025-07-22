@@ -21,11 +21,14 @@
 #include <libavutil/rational.h>
 #include <libavutil/opt.h>
 #include <libswscale/swscale.h>
+#include <libswresample/swresample.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+
+#define LIBAVUTIL_VERSION_CHECK(maj, min, mic) (((LIBAVUTIL_VERSION_MAJOR >= maj) && (LIBAVUTIL_VERSION_MINOR >= min) && (LIBAVUTIL_VERSION_MICRO >= mic))? 1 : 0)
 
 
 // External logging function from main.c
@@ -732,6 +735,14 @@ bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
         
         LOG(INFO, "Successfully trimmed audio from %u bytes to %u bytes\n", 
             audio_size, *output_size_ptr);
+        
+        // DEBUG: Write trimmed audio to file for debugging
+        FILE* debug_audio = fopen("debug_trimmed_audio.mp3", "wb");
+        if (debug_audio) {
+            fwrite(output_buf.data, 1, output_buf.size, debug_audio);
+            fclose(debug_audio);
+            LOG(INFO, "DEBUG: Wrote trimmed audio to debug_trimmed_audio.mp3 (%u bytes)\n", *output_size_ptr);
+        }
     } else {
         LOG(ERROR, "ERROR: No output audio data generated\n");
         if (output_buf.data) {
@@ -747,4 +758,536 @@ bool process_audio_data(const uint8_t* audio_data, uint32_t audio_size,
     avio_context_free(&input_avio);
     
     return (*output_data_ptr != NULL);
+} 
+
+bool extract_audio_from_video(const char* video_filename, 
+                             uint8_t** output_data_ptr, uint32_t* output_size_ptr) {
+    if (!video_filename || !output_data_ptr || !output_size_ptr) {
+        return false;
+    }
+    
+    // Initialize output parameters
+    *output_data_ptr = NULL;
+    *output_size_ptr = 0;
+    
+    LOG(INFO, "Extracting audio from video file: %s\n", video_filename);
+    
+    // Open input video file
+    AVFormatContext* input_fmt_ctx = NULL;
+    if (!open_input(video_filename, NULL, 0, &input_fmt_ctx)) {
+        return false;
+    }
+    
+    // Find audio stream
+    int audio_stream_idx = -1;
+    for (unsigned int i = 0; i < input_fmt_ctx->nb_streams; i++) {
+        if (input_fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO) {
+            audio_stream_idx = i;
+            break;
+        }
+    }
+    
+    if (audio_stream_idx == -1) {
+        LOG(INFO, "No audio stream found in video file\n");
+        avformat_close_input(&input_fmt_ctx);
+        return true; // Not an error, just no audio
+    }
+    
+    AVStream* input_stream = input_fmt_ctx->streams[audio_stream_idx];
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+    int channels = input_stream->codecpar->ch_layout.nb_channels;
+#else
+    int channels = input_stream->codecpar->channels;
+#endif
+    LOG(INFO, "Found audio stream: codec=%d, sample_rate=%d, channels=%d\n", 
+        input_stream->codecpar->codec_id, 
+        input_stream->codecpar->sample_rate,
+        channels);
+    
+    // Set up output buffer for the entire audio stream
+    output_buffer_t output_buf = { NULL, 0, 0 };
+    
+    // Create custom I/O context for output
+    uint8_t* output_avio_buffer = av_malloc(4096);
+    if (!output_avio_buffer) {
+        LOG(ERROR, "ERROR: Failed to allocate output AVIO buffer\n");
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    AVIOContext* output_avio = avio_alloc_context(output_avio_buffer, 4096, 1, &output_buf, 
+                                                 NULL, write_output_buffer, NULL);
+    if (!output_avio) {
+        LOG(ERROR, "ERROR: Failed to create output AVIO context\n");
+        av_free(output_avio_buffer);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Create output format context - using MP3 format for better OS compatibility
+    AVFormatContext* output_fmt_ctx = NULL;
+    if (avformat_alloc_output_context2(&output_fmt_ctx, NULL, "mp3", NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to create output format context\n");
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    output_fmt_ctx->pb = output_avio;
+    
+    // Set up audio decoder for input stream
+    const AVCodec* decoder = avcodec_find_decoder(input_stream->codecpar->codec_id);
+    if (!decoder) {
+        LOG(ERROR, "ERROR: Failed to find decoder for audio stream\n");
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    AVCodecContext* decoder_ctx = avcodec_alloc_context3(decoder);
+    if (!decoder_ctx) {
+        LOG(ERROR, "ERROR: Failed to allocate decoder context\n");
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    if (avcodec_parameters_to_context(decoder_ctx, input_stream->codecpar) < 0) {
+        LOG(ERROR, "ERROR: Failed to copy decoder parameters\n");
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    if (avcodec_open2(decoder_ctx, decoder, NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to open decoder\n");
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Set up MP3 encoder for output
+    const AVCodec* encoder = avcodec_find_encoder(AV_CODEC_ID_MP3);
+    if (!encoder) {
+        LOG(ERROR, "ERROR: Failed to find MP3 encoder\n");
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    AVCodecContext* encoder_ctx = avcodec_alloc_context3(encoder);
+    if (!encoder_ctx) {
+        LOG(ERROR, "ERROR: Failed to allocate encoder context\n");
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Configure MP3 encoder
+    encoder_ctx->bit_rate = 128000; // 128 kbps
+    encoder_ctx->sample_rate = decoder_ctx->sample_rate;
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+    av_channel_layout_copy(&encoder_ctx->ch_layout, &decoder_ctx->ch_layout);
+#else
+    encoder_ctx->channels = decoder_ctx->channels;
+    encoder_ctx->channel_layout = decoder_ctx->channel_layout;
+#endif
+    encoder_ctx->sample_fmt = encoder->sample_fmts ? encoder->sample_fmts[0] : AV_SAMPLE_FMT_S16P;
+    encoder_ctx->time_base = (AVRational){1, encoder_ctx->sample_rate};
+    
+    // DEBUG: Log encoder configuration
+    LOG(INFO, "DEBUG: MP3 Encoder Config:\n");
+    LOG(INFO, "  - Bit rate: %lld bps\n", encoder_ctx->bit_rate);
+    LOG(INFO, "  - Sample rate: %d Hz\n", encoder_ctx->sample_rate);
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+    LOG(INFO, "  - Channels: %d\n", encoder_ctx->ch_layout.nb_channels);
+#else
+    LOG(INFO, "  - Channels: %d\n", encoder_ctx->channels);
+#endif
+    LOG(INFO, "  - Sample format: %s\n", av_get_sample_fmt_name(encoder_ctx->sample_fmt));
+    LOG(INFO, "  - Time base: %d/%d\n", encoder_ctx->time_base.num, encoder_ctx->time_base.den);
+    
+    if (avcodec_open2(encoder_ctx, encoder, NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to open MP3 encoder\n");
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Create output stream and copy encoder parameters
+    AVStream* output_stream = avformat_new_stream(output_fmt_ctx, encoder);
+    if (!output_stream) {
+        LOG(ERROR, "ERROR: Failed to create output stream\n");
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    if (avcodec_parameters_from_context(output_stream->codecpar, encoder_ctx) < 0) {
+        LOG(ERROR, "ERROR: Failed to copy encoder parameters to stream\n");
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    output_stream->time_base = encoder_ctx->time_base;
+    
+    // Set up audio resampler/converter (swresample)
+    SwrContext* swr_ctx = swr_alloc();
+    if (!swr_ctx) {
+        LOG(ERROR, "ERROR: Failed to allocate SwrContext\n");
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Configure resampler
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+    av_opt_set_chlayout(swr_ctx, "in_chlayout", &decoder_ctx->ch_layout, 0);
+    av_opt_set_chlayout(swr_ctx, "out_chlayout", &encoder_ctx->ch_layout, 0);
+#else
+    av_opt_set_int(swr_ctx, "in_channel_layout", decoder_ctx->channel_layout, 0);
+    av_opt_set_int(swr_ctx, "out_channel_layout", encoder_ctx->channel_layout, 0);
+#endif
+    av_opt_set_int(swr_ctx, "in_sample_rate", decoder_ctx->sample_rate, 0);
+    av_opt_set_int(swr_ctx, "out_sample_rate", encoder_ctx->sample_rate, 0);
+    av_opt_set_sample_fmt(swr_ctx, "in_sample_fmt", decoder_ctx->sample_fmt, 0);
+    av_opt_set_sample_fmt(swr_ctx, "out_sample_fmt", encoder_ctx->sample_fmt, 0);
+    
+    if (swr_init(swr_ctx) < 0) {
+        LOG(ERROR, "ERROR: Failed to initialize SwrContext\n");
+        swr_free(&swr_ctx);
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    LOG(INFO, "Audio resampler configured: %s@%dHz → %s@%dHz\n",
+        av_get_sample_fmt_name(decoder_ctx->sample_fmt), decoder_ctx->sample_rate,
+        av_get_sample_fmt_name(encoder_ctx->sample_fmt), encoder_ctx->sample_rate);
+    
+    // Write output header
+    if (avformat_write_header(output_fmt_ctx, NULL) < 0) {
+        LOG(ERROR, "ERROR: Failed to write output header\n");
+        swr_free(&swr_ctx);
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Allocate frames and packet for transcoding
+    AVPacket* input_packet = av_packet_alloc();
+    AVPacket* output_packet = av_packet_alloc();
+    AVFrame* decoded_frame = av_frame_alloc();
+    AVFrame* resampled_frame = av_frame_alloc();
+    
+    if (!input_packet || !output_packet || !decoded_frame || !resampled_frame) {
+        LOG(ERROR, "ERROR: Failed to allocate packets/frames for audio transcoding\n");
+        av_packet_free(&input_packet);
+        av_packet_free(&output_packet);
+        av_frame_free(&decoded_frame);
+        av_frame_free(&resampled_frame);
+        swr_free(&swr_ctx);
+        avcodec_free_context(&encoder_ctx);
+        avcodec_free_context(&decoder_ctx);
+        avformat_free_context(output_fmt_ctx);
+        avio_context_free(&output_avio);
+        avformat_close_input(&input_fmt_ctx);
+        return false;
+    }
+    
+    // Resampled frame will be configured in each iteration
+    
+    LOG(INFO, "Starting audio transcoding from %s to MP3...\n", 
+        avcodec_get_name(decoder_ctx->codec_id));
+    
+    // DEBUG: Also save the original audio stream without transcoding for comparison
+    FILE* debug_original_audio = NULL;
+    if (decoder_ctx->codec_id == AV_CODEC_ID_AAC) {
+        debug_original_audio = fopen("debug_original_audio.aac", "wb");
+        LOG(INFO, "DEBUG: Will save original AAC audio to debug_original_audio.aac\n");
+    } else if (decoder_ctx->codec_id == AV_CODEC_ID_MP3) {
+        debug_original_audio = fopen("debug_original_audio.mp3", "wb");
+        LOG(INFO, "DEBUG: Will save original MP3 audio to debug_original_audio.mp3\n");
+    }
+    
+    int64_t packet_count = 0;
+    int64_t frame_count = 0;
+    
+    // Process all audio packets - decode and re-encode to MP3
+    while (av_read_frame(input_fmt_ctx, input_packet) >= 0) {
+        if (input_packet->stream_index == audio_stream_idx) {
+            packet_count++;
+            
+            // DEBUG: Write original audio packet to debug file
+            if (debug_original_audio) {
+                fwrite(input_packet->data, 1, input_packet->size, debug_original_audio);
+            }
+            
+            // Send packet to decoder
+            int ret = avcodec_send_packet(decoder_ctx, input_packet);
+            if (ret < 0) {
+                LOG(WARNING, "WARNING: Error sending packet to decoder\n");
+                av_packet_unref(input_packet);
+                continue;
+            }
+            
+            // Receive decoded frames
+            while (ret >= 0) {
+                ret = avcodec_receive_frame(decoder_ctx, decoded_frame);
+                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                    break;
+                }
+                if (ret < 0) {
+                    LOG(WARNING, "WARNING: Error receiving frame from decoder\n");
+                    break;
+                }
+                
+                frame_count++;
+                
+                // Clear any previous buffer allocation
+                av_frame_unref(resampled_frame);
+                
+                // Calculate required samples for resampling
+                int max_dst_nb_samples = av_rescale_rnd(
+                    swr_get_delay(swr_ctx, decoded_frame->sample_rate) + decoded_frame->nb_samples,
+                    encoder_ctx->sample_rate, decoded_frame->sample_rate, AV_ROUND_UP);
+                
+                // Set up resampled frame properties
+                resampled_frame->format = encoder_ctx->sample_fmt;
+                resampled_frame->sample_rate = encoder_ctx->sample_rate;
+                resampled_frame->nb_samples = max_dst_nb_samples;
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+                av_channel_layout_copy(&resampled_frame->ch_layout, &encoder_ctx->ch_layout);
+#else
+                resampled_frame->channels = encoder_ctx->channels;
+                resampled_frame->channel_layout = encoder_ctx->channel_layout;
+#endif
+                
+                // Allocate buffer for the resampled frame
+                if (av_frame_get_buffer(resampled_frame, 0) < 0) {
+                    LOG(WARNING, "WARNING: Error allocating resampled frame buffer\n");
+                    continue;
+                }
+                
+                // Convert the audio samples
+                int converted_samples = swr_convert(swr_ctx,
+                    resampled_frame->data, max_dst_nb_samples,
+                    (const uint8_t**)decoded_frame->data, decoded_frame->nb_samples);
+                
+                if (converted_samples < 0) {
+                    LOG(WARNING, "WARNING: Error converting audio samples\n");
+                    av_frame_unref(resampled_frame);
+                    continue;
+                }
+                
+                // Update frame with actual number of converted samples
+                resampled_frame->nb_samples = converted_samples;
+                resampled_frame->pts = av_rescale_q(decoded_frame->pts, 
+                    (AVRational){1, decoded_frame->sample_rate}, 
+                    (AVRational){1, encoder_ctx->sample_rate});
+                
+                // Send resampled frame to encoder
+                ret = avcodec_send_frame(encoder_ctx, resampled_frame);
+                if (ret < 0) {
+                    LOG(WARNING, "WARNING: Error sending frame to encoder\n");
+                }
+                
+                // Frame will be unreferenced at the end of outer while loop
+                
+                // Receive encoded packets
+                while (ret >= 0) {
+                    ret = avcodec_receive_packet(encoder_ctx, output_packet);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                        break;
+                    }
+                    if (ret < 0) {
+                        LOG(WARNING, "WARNING: Error receiving packet from encoder\n");
+                        break;
+                    }
+                    
+                    // Set correct stream index and timestamps
+                    output_packet->stream_index = 0;
+                    av_packet_rescale_ts(output_packet, encoder_ctx->time_base, output_stream->time_base);
+                    
+                    // Write to output
+                    if (av_interleaved_write_frame(output_fmt_ctx, output_packet) < 0) {
+                        LOG(WARNING, "WARNING: Failed to write MP3 packet\n");
+                    }
+                    
+                    av_packet_unref(output_packet);
+                }
+            }
+        }
+        av_packet_unref(input_packet);
+    }
+    
+    // Unref the resampled frame after main processing loop
+    av_frame_unref(resampled_frame);
+    
+    // Flush decoder
+    avcodec_send_packet(decoder_ctx, NULL);
+    while (avcodec_receive_frame(decoder_ctx, decoded_frame) >= 0) {
+        frame_count++;
+        
+        // Clear any previous buffer allocation
+        av_frame_unref(resampled_frame);
+        
+        // Calculate required samples for resampling
+        int max_dst_nb_samples = av_rescale_rnd(
+            swr_get_delay(swr_ctx, decoded_frame->sample_rate) + decoded_frame->nb_samples,
+            encoder_ctx->sample_rate, decoded_frame->sample_rate, AV_ROUND_UP);
+        
+        // Set up resampled frame properties
+        resampled_frame->format = encoder_ctx->sample_fmt;
+        resampled_frame->sample_rate = encoder_ctx->sample_rate;
+        resampled_frame->nb_samples = max_dst_nb_samples;
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+        av_channel_layout_copy(&resampled_frame->ch_layout, &encoder_ctx->ch_layout);
+#else
+        resampled_frame->channels = encoder_ctx->channels;
+        resampled_frame->channel_layout = encoder_ctx->channel_layout;
+#endif
+        
+        if (av_frame_get_buffer(resampled_frame, 0) >= 0) {
+            int converted_samples = swr_convert(swr_ctx,
+                resampled_frame->data, max_dst_nb_samples,
+                (const uint8_t**)decoded_frame->data, decoded_frame->nb_samples);
+            
+            if (converted_samples >= 0) {
+                resampled_frame->nb_samples = converted_samples;
+                resampled_frame->pts = av_rescale_q(decoded_frame->pts, 
+                    (AVRational){1, decoded_frame->sample_rate}, 
+                    (AVRational){1, encoder_ctx->sample_rate});
+                
+                avcodec_send_frame(encoder_ctx, resampled_frame);
+                while (avcodec_receive_packet(encoder_ctx, output_packet) >= 0) {
+                    output_packet->stream_index = 0;
+                    av_packet_rescale_ts(output_packet, encoder_ctx->time_base, output_stream->time_base);
+                    av_interleaved_write_frame(output_fmt_ctx, output_packet);
+                    av_packet_unref(output_packet);
+                }
+            }
+        }
+    }
+    
+    // Flush any remaining samples in the resampler
+    while (1) {
+        // Clear any previous buffer allocation
+        av_frame_unref(resampled_frame);
+        
+        // Set up resampled frame properties
+        resampled_frame->format = encoder_ctx->sample_fmt;
+        resampled_frame->sample_rate = encoder_ctx->sample_rate;
+        resampled_frame->nb_samples = encoder_ctx->frame_size ? encoder_ctx->frame_size : 1024;
+#if LIBAVUTIL_VERSION_CHECK(57, 28, 100)
+        av_channel_layout_copy(&resampled_frame->ch_layout, &encoder_ctx->ch_layout);
+#else
+        resampled_frame->channels = encoder_ctx->channels;
+        resampled_frame->channel_layout = encoder_ctx->channel_layout;
+#endif
+        
+        if (av_frame_get_buffer(resampled_frame, 0) < 0) break;
+        
+        int converted_samples = swr_convert(swr_ctx,
+            resampled_frame->data, resampled_frame->nb_samples,
+            NULL, 0);
+        
+        if (converted_samples <= 0) {
+            break;
+        }
+        
+        resampled_frame->nb_samples = converted_samples;
+        avcodec_send_frame(encoder_ctx, resampled_frame);
+        while (avcodec_receive_packet(encoder_ctx, output_packet) >= 0) {
+            output_packet->stream_index = 0;
+            av_packet_rescale_ts(output_packet, encoder_ctx->time_base, output_stream->time_base);
+            av_interleaved_write_frame(output_fmt_ctx, output_packet);
+            av_packet_unref(output_packet);
+        }
+    }
+    
+    // Flush encoder
+    avcodec_send_frame(encoder_ctx, NULL);
+    while (avcodec_receive_packet(encoder_ctx, output_packet) >= 0) {
+        output_packet->stream_index = 0;
+        av_packet_rescale_ts(output_packet, encoder_ctx->time_base, output_stream->time_base);
+        av_interleaved_write_frame(output_fmt_ctx, output_packet);
+        av_packet_unref(output_packet);
+    }
+    
+    // Write trailer
+    av_write_trailer(output_fmt_ctx);
+    
+    // Set output data
+    if (output_buf.size > 0) {
+        *output_data_ptr = output_buf.data;
+        *output_size_ptr = (uint32_t)output_buf.size;
+        
+        LOG(INFO, "Successfully transcoded audio to MP3: %lld input packets, %lld frames, %u output bytes\n", 
+            packet_count, frame_count, *output_size_ptr);
+        
+        // DEBUG: Write extracted audio to file for debugging
+        FILE* debug_audio = fopen("debug_extracted_audio.mp3", "wb");
+        if (debug_audio) {
+            fwrite(output_buf.data, 1, output_buf.size, debug_audio);
+            fclose(debug_audio);
+            LOG(INFO, "DEBUG: Wrote extracted audio to debug_extracted_audio.mp3 (%u bytes)\n", *output_size_ptr);
+        }
+    } else {
+        LOG(INFO, "No audio data extracted (stream may be empty)\n");
+        if (output_buf.data) {
+            free(output_buf.data);
+        }
+    }
+    
+    // Close debug original audio file
+    if (debug_original_audio) {
+        fclose(debug_original_audio);
+        LOG(INFO, "DEBUG: Closed original audio debug file\n");
+    }
+    
+    // Cleanup - unref frames before freeing them
+    av_frame_unref(decoded_frame);
+    av_frame_unref(resampled_frame);
+    av_packet_free(&input_packet);
+    av_packet_free(&output_packet);
+    av_frame_free(&decoded_frame);
+    av_frame_free(&resampled_frame);
+    swr_free(&swr_ctx);
+    avcodec_free_context(&encoder_ctx);
+    avcodec_free_context(&decoder_ctx);
+    avformat_free_context(output_fmt_ctx);
+    avio_context_free(&output_avio);
+    avformat_close_input(&input_fmt_ctx);
+    
+    return true; // Return true even if no audio data, as this is not an error
 } 

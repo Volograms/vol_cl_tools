@@ -747,6 +747,13 @@ static bool _process_header(
     if ( modified_hdr.audio && processed_audio_data != NULL ) {
         _printlog( _LOG_TYPE_INFO, "Writing audio data to file...\n" );
         
+        // DEBUG: Write final audio data to file for debugging
+        FILE* debug_audio = fopen("debug_final_audio.mp3", "wb");
+        if ( debug_audio ) {
+            fwrite( processed_audio_data, 1, processed_audio_size, debug_audio );
+            fclose( debug_audio );
+            _printlog( _LOG_TYPE_INFO, "DEBUG: Wrote final audio to debug_final_audio.mp3 (%u bytes)\n", processed_audio_size );
+        }
         
         if ( processed_audio_size != fwrite( processed_audio_data, sizeof( uint8_t ), processed_audio_size, output_file ) ) {
             _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to write audio data.\n" );
@@ -1028,12 +1035,31 @@ static bool _process_vologram( void ) {
             vol_av_dimensions( &_av_info, &_texture_width, &_texture_height );
             _printlog( _LOG_TYPE_INFO, "Video dimensions: %d x %d\n", _texture_width, _texture_height );
 
+            // Extract audio from video file for single-file conversion
+            _printlog( _LOG_TYPE_INFO, "Extracting audio from video file...\n" );
+            if ( extract_audio_from_video( _input_video_filename, &_geom_info.audio_data_ptr, &_geom_info.audio_data_sz ) ) {
+                if ( _geom_info.audio_data_ptr && _geom_info.audio_data_sz > 0 ) {
+                    _printlog( _LOG_TYPE_SUCCESS, "Successfully extracted %u bytes of audio data\n", _geom_info.audio_data_sz );
+                    _geom_info.hdr.audio = 1; // Mark that audio is present
+                } else {
+                    _printlog( _LOG_TYPE_INFO, "No audio stream found in video file\n" );
+                    _geom_info.hdr.audio = 0; // Mark that no audio is present
+                }
+            } else {
+                _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to extract audio from video file\n" );
+                vol_av_close( &_av_info );
+                return false;
+            }
+
             // Initialize BASIS Universal transcoder
             if ( _start_frame > 0 ) {
                 _printlog( _LOG_TYPE_INFO, "Seeking to start frame %d by reading frames...\n", _start_frame );
                 for ( int i = 0; i < _start_frame; i++ ) {
                     if ( !vol_av_read_next_frame( &_av_info ) ) {
                         _printlog( _LOG_TYPE_ERROR, "ERROR: Failed to seek video to start frame %d. Reached end of video.\n", _start_frame );
+                        if ( _geom_info.audio_data_ptr ) {
+                            free( _geom_info.audio_data_ptr );
+                        }
                         vol_av_close( &_av_info );
                         return false;
                     }

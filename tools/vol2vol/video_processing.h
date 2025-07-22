@@ -47,9 +47,20 @@ bool process_video_file(const char* input_video_filename, const char* output_vid
                        float fps, int start_frame, int end_frame);
 
 /**
- * Process audio data - trim MP3 audio to match frame range
+ * Extract complete audio stream from video file into a buffer
  * 
- * @param audio_data         Input MP3 audio data
+ * @param video_filename      Input video filename
+ * @param output_data_ptr     Pointer to store output audio data (will be allocated)
+ * @param output_size_ptr     Pointer to store output audio size
+ * @return                    True on success, false on error
+ */
+bool extract_audio_from_video(const char* video_filename, 
+                             uint8_t** output_data_ptr, uint32_t* output_size_ptr);
+
+/**
+ * Process audio data with frame-based trimming
+ * 
+ * @param audio_data         Input audio data (will be converted to MP3)
  * @param audio_size         Size of input audio data
  * @param fps               Frames per second for time calculation
  * @param start_frame       Start frame for trimming

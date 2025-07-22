@@ -18,7 +18,8 @@ set LIBS= ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avdevice.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avformat.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avutil.lib ^
-..\thirdparty\ffmpeg\lib\vs\x64\swscale.lib
+..\thirdparty\ffmpeg\lib\vs\x64\swscale.lib ^
+..\thirdparty\ffmpeg\lib\vs\x64\swresample.lib
 
 REM vol2vol libraries with OpenCL support
 set LIBS_VOL2VOL= ^
@@ -27,6 +28,7 @@ set LIBS_VOL2VOL= ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avformat.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\avutil.lib ^
 ..\thirdparty\ffmpeg\lib\vs\x64\swscale.lib ^
+..\thirdparty\ffmpeg\lib\vs\x64\swresample.lib ^
 ..\thirdparty\basis_universal\OpenCL\lib\OpenCL64.lib
 
 REM OpenCL is now available locally in thirdparty/basis_universal/OpenCL

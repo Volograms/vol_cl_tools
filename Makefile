@@ -20,7 +20,7 @@ SRC_AV      = lib/vol_av.c
 SRC_GEOM    = lib/vol_geom.c
 STA_LIB_AV  =
 STA_LIB_GL  =
-DYN_LIB_AV  = -lavcodec -lavdevice -lavformat -lavutil -lswscale
+DYN_LIB_AV  = -lavcodec -lavdevice -lavformat -lavutil -lswscale -lswresample
 DYN_LIB_OPENCL = -lOpenCL
 LIB_DIR     = -L ./
 BIN_EXT     = .bin
@@ -36,7 +36,7 @@ ifeq ($(OS),Windows_NT)
 	INC_DIR   += -I thirdparty/ffmpeg/include/
 	LIB_DIR_AV = ./thirdparty/ffmpeg/lib/vs/x64/
 	LIB_DIR   += -L $(LIB_DIR_AV)
-	STA_LIB_AV = $(LIB_DIR_AV)avcodec.lib $(LIB_DIR_AV)avdevice.lib $(LIB_DIR_AV)avformat.lib $(LIB_DIR_AV)avutil.lib $(LIB_DIR_AV)swscale.lib 
+	STA_LIB_AV = $(LIB_DIR_AV)avcodec.lib $(LIB_DIR_AV)avdevice.lib $(LIB_DIR_AV)avformat.lib $(LIB_DIR_AV)avutil.lib $(LIB_DIR_AV)swscale.lib $(LIB_DIR_AV)swresample.lib 
 	DYN_LIB_OPENCL = -lOpenCL
 	CLEAN_CMD  = del /Q *.bin *.o lib\*.o thirdparty\basis_universal\*.o tools\vol2obj\*.o tools\vol2vol\*.o
 else
