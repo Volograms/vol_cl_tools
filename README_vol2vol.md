@@ -7,7 +7,7 @@
 ## Features
 
 - **Convert single-file volograms**: Process modern .vols files that contain all data in one file
-- **Convert multi-file volograms**: Process older volograms with separate header, sequence, and video files (WIP)
+- **Convert multi-file volograms**: Process older volograms with separate header, sequence, and video files
 - **Remove normals**: Option to strip normal vectors from the mesh data to reduce file size
 - **Resize textures**: High-quality BASIS Universal texture resizing with format preservation
 - **Preserve all other data**: Maintains textures, indices, UVs, and other mesh information
@@ -35,6 +35,9 @@
 - `-t, --texture-size WIDTHxHEIGHT`: Resize texture to specified resolution (e.g., 512x512)
 - `-sf, --start-frame N`: Start frame for video cutting (inclusive)
 - `-ef, --end-frame N`: End frame for video cutting (inclusive)
+- `-q, --quality N`: BASIS texture quality (1-255). Higher is better. Default is 192.
+- `-t, --threads N`: Number of threads for encoding basis textures. Default is 4.
+- `-to-single-file`: Convert video-based texture to a single vols file.
 - `--help`: Show help message
 
 ## Examples
@@ -69,15 +72,15 @@
 ./vol2vol -i myvologram.vols -o myvologram_optimized.vols --texture-size 512x512 --no-normals --start-frame 10 --end-frame 100
 ```
 
-<!-- ### Convert multi-file vologram to single-file format
+### Convert multi-file vologram to single-file format
 ```bash
-./vol2vol -h header.vols -s sequence_0.vols -v texture_1024.webm -o converted.vols
+./vol2vol -h header.vols -s sequence_0.vols -v texture_1024.mp4 -o converted.vols --to-single-file
 ```
 
 ### Process vologram without modifications (format conversion)
 ```bash
 ./vol2vol -i input.vols -o output.vols
-``` -->
+```
 
 ## Building
 
@@ -129,6 +132,4 @@ When using `--start-frame` and `--end-frame` options:
 - Supported for BASIS Universal textures only (v1.3+)
 
 ## Limitations
-
-- Does not support texture format conversion
 - Requires all dependencies (FFmpeg, Basis Universal) for full functionality
