@@ -1256,6 +1256,7 @@ int main( int argc, char** argv ) {
     
     // Check for help
     if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
+        printf( "vol2vol v1.0.0\n" );
         printf( "Usage:\n" );
         printf( "  For single-file volograms:\n" );
         printf( "    %s -i INPUT.VOLS -o OUTPUT.VOLS [OPTIONS]\n\n", argv[0] );
