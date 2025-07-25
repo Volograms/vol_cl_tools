@@ -33,6 +33,7 @@
  *
  * History
  * -----------
+ * - 0.8.1   (2025/07/25) - Fix vols v1.3 texture type (basis or video) detection based on header information.
  * - 0.8.0   (2023/07/05) - `--combined` and `--no-normals` flags. vols v1.3 and Basis Universal texture support. Expanded drag-and-drop. Disk space check.
  * - 0.7.1   (2023/06/20) - Support for Volograms without normals.
  * - 0.7.0   (2022/07/29) - `--prefix` flag, and updated vol_libs, updated cl param parsing system.
