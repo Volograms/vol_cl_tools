@@ -47,6 +47,9 @@ typedef struct vol_geom_file_record_t {
 } vol_geom_file_record_t;
 
 static void _default_logger( vol_geom_log_type_t log_type, const char* message_str ) {
+  if ( VOL_GEOM_LOG_TYPE_DEBUG == log_type ) {
+    return;
+  }
   FILE* stream_ptr = ( VOL_GEOM_LOG_TYPE_ERROR == log_type || VOL_GEOM_LOG_TYPE_WARNING == log_type ) ? stderr : stdout;
   fprintf( stream_ptr, "%s", message_str );
 }

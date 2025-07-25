@@ -60,9 +60,13 @@ output_frame_*
 *.bvh
 *.dll
 vol_cl_tools_*
-build/
+build*
 
 *.jpg
 *.mtl
 *.webp
 *.png
+
+
+# External dependencies
+ffmpeg-7.0.1/

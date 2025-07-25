@@ -33,6 +33,7 @@
  *
  * History
  * -----------
+ * - 0.8.1   (2025/07/25) - Fix vols v1.3 texture type (basis or video) detection based on header information.
  * - 0.8.0   (2023/07/05) - `--combined` and `--no-normals` flags. vols v1.3 and Basis Universal texture support. Expanded drag-and-drop. Disk space check.
  * - 0.7.1   (2023/06/20) - Support for Volograms without normals.
  * - 0.7.0   (2022/07/29) - `--prefix` flag, and updated vol_libs, updated cl param parsing system.
@@ -650,7 +651,7 @@ static bool _process_vologram( int first_frame_idx, int last_frame_idx, bool all
       goto _pv_fail;
     }
 
-    if ( _geom_info.hdr.version < 13 ) {
+    if ( !_geom_info.hdr.textured ) {
       use_vol_av = true;
     } else {
       if ( !vol_basis_init() ) {
@@ -805,6 +806,7 @@ int main( int argc, char** argv ) {
     { // Register any user-set options.
       if ( argc < 2 || _option_arg_indices[CL_HELP] ) {
         printf(
+          "VOL to OBJ version 0.8.1\n"
           "Usage for single-file volograms:\n"
           "%s [OPTIONS] -c MYFILE.VOLS\n\n"
           "Usage for multi-file volograms:\n"
